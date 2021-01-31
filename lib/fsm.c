@@ -8,7 +8,6 @@
 #include <inttypes.h>
 #include <utime.h>
 #include <errno.h>
-#include <stdbool.h>
 #if WITH_CAP
 #include <sys/capability.h>
 #endif
@@ -896,10 +895,10 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
 
     Header h = rpmteHeader(te);
     const char *payloadfmt = headerGetString(h, RPMTAG_PAYLOADFORMAT);
-    bool cpio = true;
+    int cpio = 1;
 
     if (payloadfmt && rstreq(payloadfmt, "clon")) {
-	cpio = false;
+	cpio = 0;
     }
 
     /* transaction id used for temporary path suffix while installing */
@@ -927,13 +926,13 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
 	/* Run fsm file pre hook for all plugins */
 	rc = rpmpluginsCallFsmFilePre(plugins, fi, fp->fpath,
 				      fp->sb.st_mode, fp->action);
-	fp->plugin_contents = false;
+	fp->plugin_contents = 0;
 	switch (rc) {
 	case RPMRC_OK:
 	    setFileState(fs, fx);
 	    break;
 	case RPMRC_PLUGIN_CONTENTS:
-	    fp->plugin_contents = true;
+	    fp->plugin_contents = 1;
 	    // reduce reads on cpio to this value. Could be zero if
 	    // this is from a hard link.
 	    rc = RPMRC_OK;
