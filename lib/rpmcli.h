@@ -411,6 +411,15 @@ int rpmcliImportPubkeys(rpmts ts, ARGV_const_t argv);
  */
 int rpmcliVerifySignatures(rpmts ts, ARGV_const_t argv);
 
+
+/** \ingroup rpmcli
+ * Verify package signatures
+ * @param ts		transaction set
+ * @param fd		a file descriptor to verify
+ * @return		0 on success
+ */
+int rpmcliVerifySignaturesFD(rpmts ts, FD_t fd);
+
 #ifdef __cplusplus
 }
 #endif

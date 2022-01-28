@@ -2,7 +2,9 @@
 
 #include "system.h"
 
+#include <rpm/rpmcli.h>
 #include <rpm/rpmlib.h>		/* rpmReadPackageFile .. */
+#include <rpm/rpmlog.h>
 #include <rpm/rpmfi.h>
 #include <rpm/rpmtag.h>
 #include <rpm/rpmio.h>
@@ -10,6 +12,7 @@
 
 #include <rpm/rpmts.h>
 #include "lib/rpmlead.h"
+#include "lib/rpmts.h"
 #include "lib/signature.h"
 #include "lib/header_internal.h"
 #include "rpmio/rpmio_internal.h"
@@ -50,6 +53,16 @@ rpm_loff_t pad_to(rpm_loff_t pos, rpm_loff_t unit)
 {
     return (unit - (pos % unit)) % unit;
 }
+
+static struct poptOption optionsTable[] = {
+    { NULL, '\0', POPT_ARG_INCLUDE_TABLE, rpmcliAllPoptTable, 0,
+    N_("Common options for all rpm modes and executables:"), NULL },
+
+    POPT_AUTOALIAS
+    POPT_AUTOHELP
+    POPT_TABLEEND
+};
+
 
 static int digestor(
     FD_t fdi,
@@ -120,7 +133,19 @@ exit:
     return rc;
 }
 
-static rpmRC process_package(FD_t fdi, FD_t validationi)
+static rpmRC validator(FD_t fdi){
+    rpmts ts = rpmtsCreate();
+    rpmtsSetRootDir(ts, rpmcliRootDir);
+    /* rpmlog prints NOTICE to stdout */
+    // rpmlogSetFile(stderr);
+    if(rpmcliVerifySignaturesFD(ts, fdi)){
+	fprintf(stderr, _("Error validating package\n"));
+	return RPMRC_FAIL;
+    }
+    return RPMRC_OK;
+}
+
+static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
 {
     uint32_t diglen;
     /* GNU C extension: can use diglen from outer context */
@@ -148,7 +173,7 @@ static rpmRC process_package(FD_t fdi, FD_t validationi)
     rpm_mode_t mode;
     char *rpmio_flags = NULL, *zeros;
     const unsigned char *digest;
-    rpm_loff_t pos, size, pad, validation_pos;
+    rpm_loff_t pos, size, pad, digest_pos, validation_pos;
     uint32_t offset_ix = 0;
     size_t len;
     int next = 0;
@@ -278,17 +303,26 @@ static rpmRC process_package(FD_t fdi, FD_t validationi)
 	    goto exit;
 	}
     }
-    validation_pos = (
+    digest_pos = (
 	pos + sizeof(offset_ix) + sizeof(diglen) +
 	offset_ix * (diglen + sizeof(rpm_loff_t))
     );
 
-    ssize_t validation_len = ufdCopy(validationi, fdo);
-    if (validation_len == -1) {
+    ssize_t digest_len = ufdCopy(digestori, fdo);
+    if (digest_len == -1) {
 	fprintf(stderr, _("digest table ufdCopy failed\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
+
+    validation_pos = digest_pos + digest_len;
+    ssize_t validation_len = ufdCopy(validationi, fdo);
+    if (validation_len == -1) {
+	fprintf(stderr, _("validation output ufdCopy failed\n"));
+	rc = RPMRC_FAIL;
+	goto exit;
+    }
+
     /* add more padding so the last file can be cloned. It doesn't matter that
      * the table and validation etc are in this space. In fact, it's pretty
      * efficient if it is.
@@ -307,8 +341,13 @@ static rpmRC process_package(FD_t fdi, FD_t validationi)
 	rc = RPMRC_FAIL;
 	goto exit;
     }
-    if (Fwrite(&validation_pos, len, 1, fdo) != len) {
+    if (Fwrite(&digest_pos, len, 1, fdo) != len) {
 	fprintf(stderr, _("Unable to write offset of validation table\n"));
+	rc = RPMRC_FAIL;
+	goto exit;
+    }
+    if (Fwrite(&validation_pos, len, 1, fdo) != len) {
+	fprintf(stderr, _("Unable to write offset of validation output\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
@@ -327,10 +366,156 @@ exit:
     return rc;
 }
 
+static off_t ufdTee(FD_t sfd, FD_t *fds, int len)
+{
+    char buf[BUFSIZ];
+    ssize_t rdbytes, wrbytes;
+    off_t total = 0;
+
+    while (1) {
+	rdbytes = Fread(buf, sizeof(buf[0]), sizeof(buf), sfd);
+
+	if (rdbytes > 0) {
+	    for(int i=0; i < len; i++) {
+		wrbytes = Fwrite(buf, sizeof(buf[0]), rdbytes, fds[i]);
+		if (wrbytes != rdbytes) {
+		    fprintf(stderr, "Error wriing to FD %d: %s\n", i, Fstrerror(fds[i]));
+		    total = -1;
+		    break;
+		}
+	    }
+	    if(total == -1){
+		break;
+	    }
+	    total += wrbytes;
+	} else {
+	    if (rdbytes < 0)
+		total = -1;
+	    break;
+	}
+    }
+
+    return total;
+}
+
+static int teeRpm(FD_t fdi, FD_t digestori) {
+    rpmRC rc;
+    off_t offt = -1;
+    int processorpipefd[2];
+    int validatorpipefd[2];
+    int rpmsignpipefd[2];
+    pid_t cpids[2], w;
+    int wstatus;
+    FD_t fds[2];
+
+     if (pipe(processorpipefd) == -1) {
+	fprintf(stderr, _("Processor pipe failure\n"));
+	return RPMRC_FAIL;
+    }
+
+    if (pipe(validatorpipefd) == -1) {
+	fprintf(stderr, _("Validator pipe failure\n"));
+	return RPMRC_FAIL;
+    }
+
+    if (pipe(rpmsignpipefd) == -1) {
+	fprintf(stderr, _("Validator pipe failure\n"));
+	return RPMRC_FAIL;
+    }
+
+    cpids[0] = fork();
+    if (cpids[0] == 0) {
+	/* child: validator */
+	close(processorpipefd[0]);
+	close(processorpipefd[1]);
+	close(validatorpipefd[1]);
+	close(rpmsignpipefd[0]);
+	FD_t fdi = fdDup(validatorpipefd[0]);
+	// redirect STDOUT to the pipe
+	close(STDOUT_FILENO);
+	FD_t fdo = fdDup(rpmsignpipefd[1]);
+	close(rpmsignpipefd[1]);
+	rc = validator(fdi);
+	if(rc != RPMRC_OK) {
+	    fprintf(stderr, _("Validator failed\n"));
+	}
+	Fclose(fdi);
+	Fclose(fdo);
+	if (rc != RPMRC_OK) {
+	    exit(EXIT_FAILURE);
+	}
+	exit(EXIT_SUCCESS);
+    } else {
+	/* parent: main program */
+	cpids[1] = fork();
+	if (cpids[1] == 0) {
+	    /* child: process_package */
+	    close(validatorpipefd[0]);
+	    close(validatorpipefd[1]);
+	    close(processorpipefd[1]);
+	    close(rpmsignpipefd[1]);
+	    FD_t fdi = fdDup(processorpipefd[0]);
+	    close(processorpipefd[0]);
+	    FD_t validatori = fdDup(rpmsignpipefd[0]);
+	    close(rpmsignpipefd[0]);
+
+	    rc = process_package(fdi, digestori, validatori);
+	    if(rc != RPMRC_OK) {
+		fprintf(stderr, _("Validator failed\n"));
+	    }
+	    Fclose(digestori);
+	    Fclose(validatori);
+	    /* fdi is normally closed through the stacked file gzdi in the
+	     * function
+	     */
+
+	    if (rc != RPMRC_OK) {
+		exit(EXIT_FAILURE);
+	    }
+	    exit(EXIT_SUCCESS);
+
+
+	} else {
+	    /* Actual parent. Read from fdi and write to both processes */
+	    close(processorpipefd[0]);
+	    close(validatorpipefd[0]);
+	    fds[0] = fdDup(processorpipefd[1]);
+	    fds[1] = fdDup(validatorpipefd[1]);
+	    close(validatorpipefd[1]);
+	    close(processorpipefd[1]);
+	    close(rpmsignpipefd[0]);
+	    close(rpmsignpipefd[1]);
+
+	    offt = ufdTee(fdi, fds, 2);
+	    if(offt == -1){
+		fprintf(stderr, _("Failed to tee RPM\n"));
+		rc = RPMRC_FAIL;
+	    }
+	    Fclose(fds[0]);
+	    Fclose(fds[1]);
+	    w = waitpid(cpids[0], &wstatus, 0);
+	    if (w == -1) {
+		fprintf(stderr, _("waitpid cpids[0] failed\n"));
+		rc = RPMRC_FAIL;
+	    }
+	    w = waitpid(cpids[1], &wstatus, 0);
+	    if (w == -1) {
+		fprintf(stderr, _("waitpid cpids[1] failed\n"));
+		rc = RPMRC_FAIL;
+	    }
+	}
+    }
+
+    return rc;
+}
+
 int main(int argc, char *argv[]) {
     rpmRC rc;
     int cprc = 0;
-    uint8_t algos[argc - 1];
+    poptContext optCon = NULL;
+    const char **args = NULL;
+    int nb_algos = 0;
+
     int mainpipefd[2];
     int metapipefd[2];
     pid_t cpid, w;
@@ -338,28 +523,29 @@ int main(int argc, char *argv[]) {
 
     xsetprogname(argv[0]);	/* Portability call -- see system.h */
     rpmReadConfigFiles(NULL, NULL);
+    optCon = rpmcliInit(argc, argv, optionsTable);
+    poptSetOtherOptionHelp(optCon, "[OPTIONS]* <DIGESTALGO>");
 
-    if (argc > 1 && (rstreq(argv[1], "-h") || rstreq(argv[1], "--help"))) {
-	fprintf(stderr, _("Usage: %s [DIGESTALGO]...\n"), argv[0]);
-	exit(EXIT_FAILURE);
-    }
-
-    if (argc == 1) {
+    if (poptPeekArg(optCon) == NULL) {
 	fprintf(stderr,
 		_("Need at least one DIGESTALGO parameter, e.g. 'SHA256'\n"));
+	poptPrintUsage(optCon, stderr, 0);
 	exit(EXIT_FAILURE);
     }
 
-    for (int x = 0; x < (argc - 1); x++) {
-	if (pgpStringVal(PGPVAL_HASHALGO, argv[x + 1], &algos[x]) != 0)
+    args = poptGetArgs(optCon);
+
+    for (nb_algos=0; args[nb_algos]; nb_algos++);
+    uint8_t algos[nb_algos];
+    for (int x = 0; x < nb_algos; x++) {
+	if (pgpStringVal(PGPVAL_HASHALGO, args[x], &algos[x]) != 0)
 	{
 	    fprintf(stderr,
 		    _("Unable to resolve '%s' as a digest algorithm, exiting\n"),
-		    argv[x + 1]);
+		    args[x]);
 	    exit(EXIT_FAILURE);
 	}
     }
-
 
     if (pipe(mainpipefd) == -1) {
 	fprintf(stderr, _("Main pipe failure\n"));
@@ -369,6 +555,7 @@ int main(int argc, char *argv[]) {
 	fprintf(stderr, _("Meta pipe failure\n"));
 	exit(EXIT_FAILURE);
     }
+
     cpid = fork();
     if (cpid == 0) {
 	/* child: digestor */
@@ -377,7 +564,7 @@ int main(int argc, char *argv[]) {
 	FD_t fdi = fdDup(STDIN_FILENO);
 	FD_t fdo = fdDup(mainpipefd[1]);
 	FD_t validationo = fdDup(metapipefd[1]);
-	rc = digestor(fdi, fdo, validationo, algos, argc - 1);
+	rc = digestor(fdi, fdo, validationo, algos, nb_algos);
 	Fclose(validationo);
 	Fclose(fdo);
 	Fclose(fdi);
@@ -386,12 +573,10 @@ int main(int argc, char *argv[]) {
 	close(mainpipefd[1]);
 	close(metapipefd[1]);
 	FD_t fdi = fdDup(mainpipefd[0]);
-	FD_t validationi = fdDup(metapipefd[0]);
-	rc = process_package(fdi, validationi);
-	Fclose(validationi);
-	/* fdi is normally closed through the stacked file gzdi in the
-	 * function.
-	 * Wait for child process (digestor for stdin) to complete.
+	FD_t digestori = fdDup(metapipefd[0]);
+	rc = teeRpm(fdi, digestori);
+	Fclose(digestori);
+	/* Wait for child process (digestor for stdin) to complete.
 	 */
 	if (rc != RPMRC_OK) {
 	    if (kill(cpid, SIGTERM) != 0) {
@@ -402,7 +587,7 @@ int main(int argc, char *argv[]) {
 	}
 	w = waitpid(cpid, &wstatus, 0);
 	if (w == -1) {
-	    fprintf(stderr, _("waitpid failed\n"));
+	    fprintf(stderr, _("waitpid %d failed %s\n"), cpid, strerror(errno));
 	    cprc = EXIT_FAILURE;
 	} else if (WIFEXITED(wstatus)) {
 	    cprc = WEXITSTATUS(wstatus);
