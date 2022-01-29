@@ -185,7 +185,7 @@ bin_PROGRAMS +=		rpmgraph
 rpmgraph_SOURCES =	tools/rpmgraph.c
 rpmgraph_LDADD =	lib/librpm.la rpmio/librpmio.la @WITH_POPT_LIB@
 
-dist_bin_SCRIPTS =	scripts/gendiff
+dist_bin_SCRIPTS =	scripts/gendiff scripts/rpm2extents_dump
 
 rpmconfig_DATA = rpmrc
 rpmrc: $(top_srcdir)/rpmrc.in
