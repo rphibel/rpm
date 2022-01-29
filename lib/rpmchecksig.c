@@ -260,6 +260,29 @@ exit:
     return rc;
 }
 
+static int rpmpkgVerifySigsFD(rpmKeyring keyring, int vfylevel, rpmVSFlags flags,
+			   FD_t fd, rpmsinfoCb cb, void *cbdata)
+{
+    char *msg = NULL;
+    int rc;
+    struct rpmvs_s *vs = rpmvsCreate(vfylevel, flags, keyring);
+
+    rc = rpmpkgRead(vs, fd, NULL, NULL, &msg);
+
+    if (rc)
+	goto exit;
+
+    rc = rpmvsVerify(vs, RPMSIG_VERIFIABLE_TYPE, cb, cbdata);
+
+exit:
+    if (rc && msg)
+	rpmlog(RPMLOG_ERR, "%s\n", msg);
+    rpmvsFree(vs);
+    free(msg);
+    return rc;
+}
+
+
 /* Wrapper around rpmkVerifySigs to preserve API */
 int rpmVerifySignatures(QVA_t qva, rpmts ts, FD_t fd, const char * fn)
 {
@@ -305,12 +328,38 @@ int rpmcliVerifySignatures(rpmts ts, ARGV_const_t argv)
     return res;
 }
 
-int rpmcliVerifySignaturesFD(rpmts ts, FD_t fdi)
+struct vfydatafd_s {
+    size_t len;
+    char msg[BUFSIZ];
+};
+
+
+static int vfyFDCb(struct rpmsinfo_s *sinfo, void *cbdata)
 {
-    int res = 0;
+    struct vfydatafd_s *vd = cbdata;
+    char *vmsg, *msg;
+    size_t n;
+    size_t remainder = BUFSIZ - vd->len;
+
+    vmsg = rpmsinfoMsg(sinfo);
+    rasprintf(&msg, "    %s\n", vmsg);
+    n = rstrlcpy(vd->msg + vd->len, msg, remainder);
+    free(vmsg);
+    free(msg);
+    if(n <= remainder){
+	vd->len += n;
+    }
+    return 1;
+}
+
+
+int rpmcliVerifySignaturesFD(rpmts ts, FD_t fdi, char **msg)
+{
+    rpmRC rc = RPMRC_FAIL;
     rpmKeyring keyring = rpmtsGetKeyring(ts, 1);
     rpmVSFlags vsflags = rpmtsVfyFlags(ts);
     int vfylevel = rpmtsVfyLevel(ts);
+    struct vfydatafd_s vd = {.len = 0};
 
     vsflags |= rpmcliVSFlags;
     if (rpmcliVfyLevelMask) {
@@ -318,19 +367,13 @@ int rpmcliVerifySignaturesFD(rpmts ts, FD_t fdi)
 	rpmtsSetVfyLevel(ts, vfylevel);
     }
 
-    FD_t fd = fdDup(Fileno(fdi));
-    if (fd == NULL || Ferror(fd)) {
-	rpmlog(RPMLOG_ERR, _("fdDup failed: %s\n"), Fstrerror(fd));
-	res++;
-    } else if (rpmpkgVerifySigs(keyring, vfylevel, vsflags, fd, "stdin")) {
-	res++;
+    if (!rpmpkgVerifySigsFD(keyring, vfylevel, vsflags, fdi, vfyFDCb, &vd)) {
+	rc = RPMRC_OK;
     }
-
-    lseek(Fileno(fd), SEEK_SET, 0);
-    Fclose(fd);
+    *msg = strdup(vd.msg);
     rpmsqPoll();
 
     rpmKeyringFree(keyring);
-    return res;
+    return rc;
 }
 
