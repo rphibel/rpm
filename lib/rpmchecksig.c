@@ -24,6 +24,11 @@
 
 #include "debug.h"
 
+/* magic value at end of file (64 bits) that indicates this is a transcoded
+ * rpm.
+ */
+#define MAGIC 3472329499408095051
+
 static int doImport(rpmts ts, const char *fn, char *buf, ssize_t blen)
 {
     char const * const pgpmark = "-----BEGIN PGP ";
@@ -220,6 +225,107 @@ exit:
     return rc;
 }
 
+static rpmRC isTranscodedRpm(FD_t fd) {
+    rpmRC rc = RPMRC_NOTFOUND;
+    rpm_loff_t current;
+    uint64_t magic;
+    size_t len;
+
+    // If the file is not seekable, we cannot detect whether or not it is transcoded.
+    if(Fseek(fd, 0, SEEK_CUR) < 0) {
+        return RPMRC_FAIL;
+    }
+    current = Ftell(fd);
+
+    if(Fseek(fd, -(sizeof(magic)), SEEK_END) < 0) {
+	rpmlog(RPMLOG_ERR, _("isTranscodedRpm: failed to seek for magic\n"));
+	rc = RPMRC_FAIL;
+	goto exit;
+    }
+    len = sizeof(magic);
+    if (Fread(&magic, len, 1, fd) != len) {
+	rpmlog(RPMLOG_ERR, _("isTranscodedRpm: unable to read magic\n"));
+	rc = RPMRC_FAIL;
+	goto exit;
+    }
+    if (magic != MAGIC) {
+	rpmlog(RPMLOG_DEBUG, _("isTranscodedRpm: not transcoded\n"));
+	rc = RPMRC_NOTFOUND;
+	goto exit;
+    }
+    rc = RPMRC_OK;
+exit:
+    if (Fseek(fd, current, SEEK_SET) < 0) {
+	rpmlog(RPMLOG_ERR, _("isTranscodedRpm: unable to seek back to original location\n"));
+    }
+    return rc;
+}
+
+static int rpmpkgVerifySigsTranscoded(FD_t fd){
+    rpm_loff_t current;
+    uint64_t magic;
+    rpm_loff_t offset;
+    int32_t rc;
+    size_t len;
+    uint64_t content_len;
+    char *content = NULL;
+
+    current = Ftell(fd);
+
+    if(Fseek(fd, -(sizeof(magic) + 3 * sizeof(offset) ), SEEK_END) < 0) {
+	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: failed to seek for offset\n"));
+	rc = -1;
+	goto exit;
+    }
+
+    len = sizeof(offset);
+    if (Fread(&offset, len, 1, fd) != len) {
+	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: Failed to read Signature Verification offset\n"));
+	rc = -1;
+	goto exit;
+    }
+
+    if(Fseek(fd,  offset, SEEK_SET) < 0) {
+	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: Failed to seek signature verification offset\n"));
+	rc = -1;
+	goto exit;
+    }
+    len = sizeof(rc);
+    if (Fread(&rc, len, 1, fd) != len) {
+	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: Failed to read Signature Verification RC\n"));
+	rc = -1;
+	goto exit;
+    }
+
+    len = sizeof(content_len);
+    if (Fread(&content_len, len, 1, fd) != len) {
+	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: Failed to read signature content length\n"));
+	goto exit;
+    }
+
+    content = malloc(content_len + 1);
+    if(content == NULL) {
+	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: Failed to allocate memory to read signature content\n"));
+	goto exit;
+    }
+    content[content_len] = 0;
+    if (Fread(content, content_len, 1, fd) != content_len) {
+	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: Failed to read signature content\n"));
+	goto exit;
+    }
+
+    rpmlog(RPMLOG_NOTICE, "%s", content);
+exit:
+    if(content){
+	free(content);
+    }
+    if (Fseek(fd, current, SEEK_SET) < 0) {
+	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: unable to seek back to original location\n"));
+    }
+    return rc;
+
+}
+
 static int rpmpkgVerifySigs(rpmKeyring keyring, int vfylevel, rpmVSFlags flags,
 			   FD_t fd, const char *fn)
 {
@@ -229,9 +335,13 @@ static int rpmpkgVerifySigs(rpmKeyring keyring, int vfylevel, rpmVSFlags flags,
 			    .verbose = rpmIsVerbose(),
     };
     int rc;
-    struct rpmvs_s *vs = rpmvsCreate(vfylevel, flags, keyring);
 
     rpmlog(RPMLOG_NOTICE, "%s:%s", fn, vd.verbose ? "\n" : "");
+
+    if(isTranscodedRpm(fd) == RPMRC_OK){
+	return rpmpkgVerifySigsTranscoded(fd);
+    }
+    struct rpmvs_s *vs = rpmvsCreate(vfylevel, flags, keyring);
 
     rc = rpmpkgRead(vs, fd, NULL, NULL, &msg);
 
