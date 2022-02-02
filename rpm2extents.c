@@ -64,38 +64,37 @@ static struct poptOption optionsTable[] = {
 };
 
 
-static int digestor(
+static void FDDigestInit(FD_t fdi, uint8_t algos[], uint32_t algos_len){
+    int algo;
+
+    for (algo = 0; algo < algos_len; algo++) {
+	fdInitDigest(fdi, algos[algo], 0);
+    }
+}
+
+static int FDWriteDigests(
     FD_t fdi,
     FD_t fdo,
-    FD_t validationo,
     uint8_t algos[],
-    uint32_t algos_len
-)
+    uint32_t algos_len)
 {
-    ssize_t fdilength;
     const char *filedigest, *algo_name;
     size_t filedigest_len, len;
     uint32_t algo_name_len, algo_digest_len;
     int algo;
     rpmRC rc = RPMRC_FAIL;
 
-    for (algo = 0; algo < algos_len; algo++) {
-	fdInitDigest(fdi, algos[algo], 0);
-    }
-    fdilength = ufdCopy(fdi, fdo);
-    if (fdilength == -1) {
-	fprintf(stderr, _("digest cat failed\n"));
-	goto exit;
-    }
+    ssize_t fdilength = fdOp(fdi, FDSTAT_READ)->bytes;
 
     len = sizeof(fdilength);
-    if (Fwrite(&fdilength, len, 1, validationo) != len) {
+    if (Fwrite(&fdilength, len, 1, fdo) != len) {
 	fprintf(stderr, _("Unable to write input length %zd\n"), fdilength);
 	goto exit;
     }
     len = sizeof(algos_len);
-    if (Fwrite(&algos_len, len, 1, validationo) != len) {
-	fprintf(stderr, _("Unable to write number of validation digests\n"));
+    if (Fwrite(&algos_len, len, 1, fdo) != len) {
+	algo_digest_len = (uint32_t)filedigest_len;
+	fprintf(stderr, _("Unable to write number of digests\n"));
 	goto exit;
     }
     for (algo = 0; algo < algos_len; algo++) {
@@ -106,24 +105,24 @@ static int digestor(
 	algo_digest_len = (uint32_t)filedigest_len;
 
 	len = sizeof(algo_name_len);
-	if (Fwrite(&algo_name_len, len, 1, validationo) != len) {
+	if (Fwrite(&algo_name_len, len, 1, fdo) != len) {
 	    fprintf(stderr,
-		    _("Unable to write validation algo name length\n"));
+		    _("Unable to write digest algo name length\n"));
 	    goto exit;
 	}
 	len = sizeof(algo_digest_len);
-	if (Fwrite(&algo_digest_len, len, 1, validationo) != len) {
+	if (Fwrite(&algo_digest_len, len, 1, fdo) != len) {
 	    fprintf(stderr,
-		    _("Unable to write number of bytes for validation digest\n"));
+		    _("Unable to write number of bytes for digest\n"));
 	     goto exit;
 	}
-	if (Fwrite(algo_name, algo_name_len, 1, validationo) != algo_name_len) {
-	    fprintf(stderr, _("Unable to write validation algo name\n"));
+	if (Fwrite(algo_name, algo_name_len, 1, fdo) != algo_name_len) {
+	    fprintf(stderr, _("Unable to write digest algo name\n"));
 	    goto exit;
 	}
-	if (Fwrite(filedigest, algo_digest_len, 1, validationo ) != algo_digest_len) {
+	if (Fwrite(filedigest, algo_digest_len, 1, fdo ) != algo_digest_len) {
 	    fprintf(stderr,
-		    _("Unable to write validation digest value %u, %zu\n"),
+		    _("Unable to write digest value %u, %zu\n"),
 		    algo_digest_len, filedigest_len);
 	    goto exit;
 	}
@@ -133,38 +132,66 @@ exit:
     return rc;
 }
 
-static rpmRC validator(FD_t fdi, FD_t fdo){
-    int rc;
+static rpmRC FDWriteSignaturesValidation(FD_t fdo, int rpmvsrc, char *msg) {
+    size_t len;
+    rpmRC rc = RPMRC_FAIL;
+
+    if(rpmvsrc){
+	fprintf(stderr, _("Error verifying package signatures\n"));
+    }
+
+    len = sizeof(rpmvsrc);
+    if (Fwrite(&rpmvsrc, len, 1, fdo) != len) {
+	fprintf(stderr, _("Unable to write signature verification RC code %d\n"), rpmvsrc);
+	goto exit;
+    }
+    size_t content_len = msg ? strlen(msg) : 0;
+    len = sizeof(content_len);
+    if (Fwrite(&content_len, len, 1, fdo) != len) {
+	fprintf(stderr, _("Unable to write signature verification output length %zd\n"), content_len);
+	goto exit;
+    }
+    if (Fwrite(msg, content_len, 1, fdo) != content_len) {
+	fprintf(stderr, _("Unable to write signature verification output %s\n"), msg);
+	goto exit;
+    }
+
+    rc = RPMRC_OK;
+exit:
+
+    return rc;
+}
+
+static rpmRC validator(FD_t fdi, FD_t digesto, FD_t sigo,
+	uint8_t algos[],
+	uint32_t algos_len){
+    int rpmvsrc;
+    rpmRC rc = RPMRC_FAIL;
     char *msg = NULL;
     rpmts ts = rpmtsCreate();
-    size_t len;
 
     rpmtsSetRootDir(ts, rpmcliRootDir);
-    rc = rpmcliVerifySignaturesFD(ts, fdi, &msg);
-    if(rc){
-	fprintf(stderr, _("Error validating package\n"));
-    }
-    len = sizeof(rc);
-    if (Fwrite(&rc, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write validator RC code %d\n"), rc);
-	goto exit;
-    }
-    size_t validator_len = msg ? strlen(msg) : 0;
-    len = sizeof(validator_len);
-    if (Fwrite(&validator_len, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write validator output length code %zd\n"), validator_len);
-	goto exit;
-    }
-    if (Fwrite(msg, validator_len, 1, fdo) != validator_len) {
-	fprintf(stderr, _("Unable to write validator output %s\n"), msg);
+
+    FDDigestInit(fdi, algos, algos_len);
+
+    rpmvsrc = rpmcliVerifySignaturesFD(ts, fdi, &msg);
+
+    // Write result of digest computation
+    if(FDWriteDigests(fdi, digesto, algos, algos_len) != RPMRC_OK) {
+	fprintf(stderr, _("Failed to write digests"));
 	goto exit;
     }
 
+    // Write result of signature validation.
+    if(FDWriteSignaturesValidation(sigo, rpmvsrc, msg)) {
+	goto exit;
+    }
+    rc = RPMRC_OK;
 exit:
     if(msg) {
 	free(msg);
     }
-    return rc ? RPMRC_FAIL : RPMRC_OK;
+    return rc;
 }
 
 static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
@@ -422,12 +449,16 @@ static off_t ufdTee(FD_t sfd, FD_t *fds, int len)
     return total;
 }
 
-static int teeRpm(FD_t fdi, FD_t digestori) {
-    rpmRC rc;
+static rpmRC teeRpm(FD_t fdi, uint8_t algos[], uint32_t algos_len) {
+    rpmRC rc = RPMRC_FAIL;
     off_t offt = -1;
+    // tee-ed stdin
     int processorpipefd[2];
     int validatorpipefd[2];
-    int rpmsignpipefd[2];
+    // metadata
+    int meta_digestpipefd[2];
+    int meta_rpmsignpipefd[2];
+
     pid_t cpids[2], w;
     int wstatus;
     FD_t fds[2];
@@ -442,8 +473,13 @@ static int teeRpm(FD_t fdi, FD_t digestori) {
 	return RPMRC_FAIL;
     }
 
-    if (pipe(rpmsignpipefd) == -1) {
-	fprintf(stderr, _("Validator pipe failure\n"));
+    if (pipe(meta_digestpipefd) == -1) {
+	fprintf(stderr, _("Meta digest pipe failure\n"));
+	return RPMRC_FAIL;
+    }
+
+    if (pipe(meta_rpmsignpipefd) == -1) {
+	fprintf(stderr, _("Meta rpm signature pipe failure\n"));
 	return RPMRC_FAIL;
     }
 
@@ -453,16 +489,20 @@ static int teeRpm(FD_t fdi, FD_t digestori) {
 	close(processorpipefd[0]);
 	close(processorpipefd[1]);
 	close(validatorpipefd[1]);
-	close(rpmsignpipefd[0]);
+	close(meta_digestpipefd[0]);
+	close(meta_rpmsignpipefd[0]);
 	FD_t fdi = fdDup(validatorpipefd[0]);
-	FD_t fdo = fdDup(rpmsignpipefd[1]);
-	close(rpmsignpipefd[1]);
-	rc = validator(fdi, fdo);
+	FD_t digesto = fdDup(meta_digestpipefd[1]);
+	FD_t sigo = fdDup(meta_rpmsignpipefd[1]);
+	close(meta_digestpipefd[1]);
+	close(meta_rpmsignpipefd[1]);
+	rc = validator(fdi, digesto, sigo, algos, algos_len);
 	if(rc != RPMRC_OK) {
 	    fprintf(stderr, _("Validator failed\n"));
 	}
 	Fclose(fdi);
-	Fclose(fdo);
+	Fclose(digesto);
+	Fclose(sigo);
 	if (rc != RPMRC_OK) {
 	    exit(EXIT_FAILURE);
 	}
@@ -475,18 +515,21 @@ static int teeRpm(FD_t fdi, FD_t digestori) {
 	    close(validatorpipefd[0]);
 	    close(validatorpipefd[1]);
 	    close(processorpipefd[1]);
-	    close(rpmsignpipefd[1]);
+	    close(meta_digestpipefd[1]);
+	    close(meta_rpmsignpipefd[1]);
 	    FD_t fdi = fdDup(processorpipefd[0]);
 	    close(processorpipefd[0]);
-	    FD_t validatori = fdDup(rpmsignpipefd[0]);
-	    close(rpmsignpipefd[0]);
+	    FD_t sigi = fdDup(meta_rpmsignpipefd[0]);
+	    close(meta_rpmsignpipefd[0]);
+	    FD_t digestori = fdDup(meta_digestpipefd[0]);
+	    close(meta_digestpipefd[0]);
 
-	    rc = process_package(fdi, digestori, validatori);
+	    rc = process_package(fdi, digestori, sigi);
 	    if(rc != RPMRC_OK) {
 		fprintf(stderr, _("Validator failed\n"));
 	    }
 	    Fclose(digestori);
-	    Fclose(validatori);
+	    Fclose(sigi);
 	    /* fdi is normally closed through the stacked file gzdi in the
 	     * function
 	     */
@@ -505,8 +548,10 @@ static int teeRpm(FD_t fdi, FD_t digestori) {
 	    fds[1] = fdDup(validatorpipefd[1]);
 	    close(validatorpipefd[1]);
 	    close(processorpipefd[1]);
-	    close(rpmsignpipefd[0]);
-	    close(rpmsignpipefd[1]);
+	    close(meta_digestpipefd[0]);
+	    close(meta_digestpipefd[1]);
+	    close(meta_rpmsignpipefd[0]);
+	    close(meta_rpmsignpipefd[1]);
 
 	    rc = RPMRC_OK;
 	    offt = ufdTee(fdi, fds, 2);
@@ -534,15 +579,9 @@ static int teeRpm(FD_t fdi, FD_t digestori) {
 
 int main(int argc, char *argv[]) {
     rpmRC rc;
-    int cprc = 0;
     poptContext optCon = NULL;
     const char **args = NULL;
     int nb_algos = 0;
-
-    int mainpipefd[2];
-    int metapipefd[2];
-    pid_t cpid, w;
-    int wstatus;
 
     xsetprogname(argv[0]);	/* Portability call -- see system.h */
     rpmReadConfigFiles(NULL, NULL);
@@ -570,69 +609,8 @@ int main(int argc, char *argv[]) {
 	}
     }
 
-    if (pipe(mainpipefd) == -1) {
-	fprintf(stderr, _("Main pipe failure\n"));
-	exit(EXIT_FAILURE);
-    }
-    if (pipe(metapipefd) == -1) {
-	fprintf(stderr, _("Meta pipe failure\n"));
-	exit(EXIT_FAILURE);
-    }
-
-    cpid = fork();
-    if (cpid == 0) {
-	/* child: digestor */
-	close(mainpipefd[0]);
-	close(metapipefd[0]);
-	FD_t fdi = fdDup(STDIN_FILENO);
-	FD_t fdo = fdDup(mainpipefd[1]);
-	FD_t validationo = fdDup(metapipefd[1]);
-	rc = digestor(fdi, fdo, validationo, algos, nb_algos);
-	Fclose(validationo);
-	Fclose(fdo);
-	Fclose(fdi);
-    } else {
-	/* parent: main program */
-	close(mainpipefd[1]);
-	close(metapipefd[1]);
-	FD_t fdi = fdDup(mainpipefd[0]);
-	FD_t digestori = fdDup(metapipefd[0]);
-	rc = teeRpm(fdi, digestori);
-	Fclose(digestori);
-	/* Wait for child process (digestor for stdin) to complete.
-	 */
-	if (rc != RPMRC_OK) {
-	    if (kill(cpid, SIGTERM) != 0) {
-		fprintf(stderr,
-		        _("Failed to kill digest process when main process failed: %s\n"),
-			strerror(errno));
-	    }
-	}
-	w = waitpid(cpid, &wstatus, 0);
-	if (w == -1) {
-	    fprintf(stderr, _("waitpid %d failed %s\n"), cpid, strerror(errno));
-	    cprc = EXIT_FAILURE;
-	} else if (WIFEXITED(wstatus)) {
-	    cprc = WEXITSTATUS(wstatus);
-	    if (cprc != 0) {
-		fprintf(stderr,
-			_("Digest process non-zero exit code %d\n"),
-			cprc);
-	    }
-	} else if (WIFSIGNALED(wstatus)) {
-	    fprintf(stderr,
-		    _("Digest process was terminated with a signal: %d\n"),
-		    WTERMSIG(wstatus));
-	    cprc = EXIT_FAILURE;
-	} else {
-	    /* Don't think this can happen, but covering all bases */
-	    fprintf(stderr, _("Unhandled circumstance in waitpid\n"));
-	    cprc = EXIT_FAILURE;
-	}
-	if (cprc != EXIT_SUCCESS) {
-	    rc = RPMRC_FAIL;
-	}
-    }
+    FD_t fdi = fdDup(STDIN_FILENO);
+    rc = teeRpm(fdi, algos, nb_algos);
     if (rc != RPMRC_OK) {
 	/* translate rpmRC into generic failure return code. */
 	return EXIT_FAILURE;
