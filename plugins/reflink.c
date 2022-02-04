@@ -13,6 +13,7 @@
 #include <rpm/rpmlog.h>
 #include "lib/rpmlib.h"
 #include "lib/rpmplugin.h"
+#include "lib/rpmextents_internal.h"
 #include "lib/rpmte_internal.h"
 #include <rpm/rpmfileutil.h>
 #include "rpmio/rpmio_internal.h"
@@ -39,11 +40,6 @@
 #define NOT_FOUND 0
 
 #define BUFFER_SIZE (1024 * 128)
-
-/* magic value at end of file (64 bits) that indicates this is a transcoded
- * rpm.
- */
-#define MAGIC 3472329499408095051
 
 struct reflink_state_s {
     /* Stuff that's used across rpms */
@@ -96,40 +92,28 @@ static void reflink_cleanup(rpmPlugin plugin) {
 }
 
 static rpmRC reflink_psm_pre(rpmPlugin plugin, rpmte te) {
+    rpmRC rc;
+    size_t len;
+
     reflink_state state = rpmPluginGetData(plugin);
     state->fd = rpmteFd(te);
     if (state->fd == 0) {
 	rpmlog(RPMLOG_DEBUG, _("reflink: fd = 0, no install\n"));
 	return RPMRC_OK;
     }
+
     rpm_loff_t current = Ftell(state->fd);
-    uint64_t magic;
-    if (Fseek(state->fd, -(sizeof(magic)), SEEK_END) < 0) {
-	rpmlog(RPMLOG_ERR, _("reflink: failed to seek for magic\n"));
-	if (Fseek(state->fd, current, SEEK_SET) < 0) {
-	    /* yes this gets a bit repetitive */
-	    rpmlog(RPMLOG_ERR,
-		 _("reflink: unable to seek back to original location\n"));
-	}
-	return RPMRC_FAIL;
-    }
-    size_t len = sizeof(magic);
-    if (Fread(&magic, len, 1, state->fd) != len) {
-	rpmlog(RPMLOG_ERR, _("reflink: unable to read magic\n"));
-	if (Fseek(state->fd, current, SEEK_SET) < 0) {
-	    rpmlog(RPMLOG_ERR,
-		   _("reflink: unable to seek back to original location\n"));
-	}
-	return RPMRC_FAIL;
-    }
-    if (magic != MAGIC) {
-	rpmlog(RPMLOG_DEBUG, _("reflink: not transcoded\n"));
-	if (Fseek(state->fd, current, SEEK_SET) < 0) {
-	    rpmlog(RPMLOG_ERR,
-		   _("reflink: unable to seek back to original location\n"));
+    rc = isTranscodedRpm(state->fd);
+
+    switch(rc){
+	// Fail to parse the file, fail the plugin.
+	case RPMRC_FAIL:
 	    return RPMRC_FAIL;
-	}
-	return RPMRC_OK;
+	// This is not a transcoded file, do nothing.
+	case RPMRC_NOTFOUND:
+	    return RPMRC_OK;
+	default:
+	    break;
     }
     rpmlog(RPMLOG_DEBUG, _("reflink: *is* transcoded\n"));
     Header h = rpmteHeader(te);
@@ -140,7 +124,7 @@ static rpmRC reflink_psm_pre(rpmPlugin plugin, rpmte te) {
     headerFree(h);
     state->files = rpmteFiles(te);
     /* tail of file contains offset_table, offset_checksums then magic */
-    if (Fseek(state->fd, -(sizeof(rpm_loff_t) * 2 + sizeof(magic)), SEEK_END) < 0) {
+    if (Fseek(state->fd, -(sizeof(rpm_loff_t) * 2 + sizeof(extents_magic_t)), SEEK_END) < 0) {
 	rpmlog(RPMLOG_ERR, _("reflink: failed to seek for tail %p\n"),
 	       state->fd);
 	return RPMRC_FAIL;

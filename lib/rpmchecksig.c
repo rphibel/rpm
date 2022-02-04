@@ -20,14 +20,10 @@
 #include "rpmio/rpmio_internal.h" 	/* fdSetBundle() */
 #include "lib/rpmlead.h"
 #include "lib/header_internal.h"
+#include "lib/rpmextents_internal.h"
 #include "lib/rpmvs.h"
 
 #include "debug.h"
-
-/* magic value at end of file (64 bits) that indicates this is a transcoded
- * rpm.
- */
-#define MAGIC 3472329499408095051
 
 static int doImport(rpmts ts, const char *fn, char *buf, ssize_t blen)
 {
@@ -222,42 +218,6 @@ exit:
 	free(msg);
     hdrblobFree(sigblob);
     hdrblobFree(blob);
-    return rc;
-}
-
-static rpmRC isTranscodedRpm(FD_t fd) {
-    rpmRC rc = RPMRC_NOTFOUND;
-    rpm_loff_t current;
-    uint64_t magic;
-    size_t len;
-
-    // If the file is not seekable, we cannot detect whether or not it is transcoded.
-    if(Fseek(fd, 0, SEEK_CUR) < 0) {
-        return RPMRC_FAIL;
-    }
-    current = Ftell(fd);
-
-    if(Fseek(fd, -(sizeof(magic)), SEEK_END) < 0) {
-	rpmlog(RPMLOG_ERR, _("isTranscodedRpm: failed to seek for magic\n"));
-	rc = RPMRC_FAIL;
-	goto exit;
-    }
-    len = sizeof(magic);
-    if (Fread(&magic, len, 1, fd) != len) {
-	rpmlog(RPMLOG_ERR, _("isTranscodedRpm: unable to read magic\n"));
-	rc = RPMRC_FAIL;
-	goto exit;
-    }
-    if (magic != MAGIC) {
-	rpmlog(RPMLOG_DEBUG, _("isTranscodedRpm: not transcoded\n"));
-	rc = RPMRC_NOTFOUND;
-	goto exit;
-    }
-    rc = RPMRC_OK;
-exit:
-    if (Fseek(fd, current, SEEK_SET) < 0) {
-	rpmlog(RPMLOG_ERR, _("isTranscodedRpm: unable to seek back to original location\n"));
-    }
     return rc;
 }
 

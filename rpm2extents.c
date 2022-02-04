@@ -15,6 +15,7 @@
 #include "lib/rpmts.h"
 #include "lib/signature.h"
 #include "lib/header_internal.h"
+#include "lib/rpmextents_internal.h"
 #include "rpmio/rpmio_internal.h"
 
 #include <unistd.h>
@@ -36,11 +37,6 @@
 #define HTKEYTYPE const unsigned char *
 #include "lib/rpmhash.H"
 #include "lib/rpmhash.C"
-
-/* magic value at end of file (64 bits) that indicates this is a transcoded
- * rpm.
- */
-#define MAGIC 3472329499408095051
 
 struct digestoffset {
     const unsigned char * digest;
@@ -402,7 +398,7 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
 	rc = RPMRC_FAIL;
 	goto exit;
     }
-    uint64_t magic = MAGIC;
+    extents_magic_t magic = EXTENTS_MAGIC;
     len = sizeof(magic);
     if (Fwrite(&magic, len, 1, fdo) != len) {
 	fprintf(stderr, _("Unable to write magic\n"));
