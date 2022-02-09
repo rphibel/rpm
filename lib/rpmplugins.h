@@ -181,7 +181,9 @@ rpmRC rpmpluginsCallFsmFileInstall(rpmPlugins plugins, rpmfi fi,
 				   const char* path, mode_t file_mode,
 				   rpmFsmOp op);
 
-
+RPM_GNUC_INTERNAL
+rpmRC rpmpluginsCallFsmFileArchiveReader(rpmPlugins plugins, FD_t payload,
+					 rpmfiles files, rpmfi *fi);
 #ifdef __cplusplus
 }
 #endif

@@ -457,4 +457,38 @@ rpmRC rpmpluginsCallFsmFileInstall(rpmPlugins plugins, rpmfi fi,
     return rc;
 }
 
+rpmRC rpmpluginsCallFsmFileArchiveReader(rpmPlugins plugins, FD_t payload,
+				   rpmfiles files, rpmfi *fi)
+{
+    plugin_fsm_file_archive_reader_func hookFunc;
+    int i;
+    rpmRC rc = RPMRC_OK;
+    rpmRC hook_rc;
+
+    for (i = 0; i < plugins->count; i++) {
+	rpmPlugin plugin = plugins->plugins[i];
+	RPMPLUGINS_SET_HOOK_FUNC(fsm_file_archive_reader);
+	if (hookFunc) {
+	    hook_rc = hookFunc(plugin, payload, files, fi);
+	    if (hook_rc == RPMRC_FAIL) {
+		rpmlog(RPMLOG_ERR, "Plugin %s: hook fsm_file_archive_reader failed\n", plugin->name);
+		rc = RPMRC_FAIL;
+	    } else if (hook_rc == RPMRC_PLUGIN_CONTENTS && rc != RPMRC_FAIL) {
+		if (rc == RPMRC_PLUGIN_CONTENTS) {
+		    /* Another plugin already said it'd handle contents. It's
+		     * undefined how these would combine, so treat this as a
+		     * failure condition.
+		    */
+		    rc = RPMRC_FAIL;
+		} else {
+		    /* Plugin will handle content */
+		    rc = RPMRC_PLUGIN_CONTENTS;
+		}
+	    }
+	}
+    }
+
+    return rc;
+}
+
 
