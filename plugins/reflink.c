@@ -54,6 +54,7 @@ struct reflink_state_s {
     FD_t fd;
     rpmfiles files;
     inodeIndexHash inodeIndexes;
+    int transcoded;
 };
 
 typedef struct reflink_state_s * reflink_state;
@@ -116,12 +117,8 @@ static rpmRC reflink_psm_pre(rpmPlugin plugin, rpmte te) {
 	    break;
     }
     rpmlog(RPMLOG_DEBUG, _("reflink: *is* transcoded\n"));
-    Header h = rpmteHeader(te);
+    state->transcoded = 1;
 
-    /* replace/add header that main fsm.c can read */
-    headerDel(h, RPMTAG_PAYLOADFORMAT);
-    headerPutString(h, RPMTAG_PAYLOADFORMAT, "clon");
-    headerFree(h);
     state->files = rpmteFiles(te);
     /* tail of file contains offset_table, offset_checksums then magic */
     if (Fseek(state->fd, -(sizeof(rpm_loff_t) * 2 + sizeof(extents_magic_t)), SEEK_END) < 0) {
@@ -350,10 +347,21 @@ static rpmRC reflink_fsm_file_install(rpmPlugin plugin, rpmfi fi, const char* pa
     return RPMRC_OK;
 }
 
+static rpmRC reflink_fsm_file_archive_reader(rpmPlugin plugin, FD_t payload,
+					     rpmfiles files, rpmfi *fi) {
+    reflink_state state = rpmPluginGetData(plugin);
+    if(state->transcoded) {
+	*fi = rpmfilesIter(files, RPMFI_ITER_FWD);
+	return RPMRC_PLUGIN_CONTENTS;
+    }
+    return RPMRC_OK;
+}
+
 struct rpmPluginHooks_s reflink_hooks = {
     .init = reflink_init,
     .cleanup = reflink_cleanup,
     .psm_pre = reflink_psm_pre,
     .psm_post = reflink_psm_post,
     .fsm_file_install = reflink_fsm_file_install,
+    .fsm_file_archive_reader = reflink_fsm_file_archive_reader,
 };

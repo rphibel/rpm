@@ -19,7 +19,6 @@
 
 #include "rpmio/rpmio_internal.h"	/* fdInit/FiniDigest */
 #include "lib/fsm.h"
-#include "lib/rpmlib.h"
 #include "lib/rpmte_internal.h"	/* XXX rpmfs */
 #include "lib/rpmplugins.h"	/* rpm plugins hooks */
 #include "lib/rpmug.h"
@@ -892,14 +891,6 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
     struct filedata_s *fdata = xcalloc(fc, sizeof(*fdata));
     struct filedata_s *firstlink = NULL;
 
-    Header h = rpmteHeader(te);
-    const char *payloadfmt = headerGetString(h, RPMTAG_PAYLOADFORMAT);
-    int cpio = 1;
-
-    if (payloadfmt && rstreq(payloadfmt, "clon")) {
-	cpio = 0;
-    }
-
     /* transaction id used for temporary path suffix while installing */
     rasprintf(&tid, ";%08x", (unsigned)rpmtsGetTid(ts));
 
@@ -933,14 +924,24 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
     if (rc)
 	goto exit;
 
-    if (cpio) {
-	fi = rpmfiNewArchiveReader(payload, files, RPMFI_ITER_READ_ARCHIVE);
-	if (fi == NULL) {
-	    rc = RPMERR_BAD_MAGIC;
-	    goto exit;
-	}
-    } else {
-	fi = rpmfilesIter(files, RPMFI_ITER_FWD);
+    rpmRC plugin_rc = rpmpluginsCallFsmFileArchiveReader(plugins, payload, files, &fi);
+    switch(plugin_rc) {
+	case RPMRC_PLUGIN_CONTENTS:
+	    if(fi == NULL) {
+		rc = RPMERR_BAD_MAGIC;
+		goto exit;
+	    }
+	    rc = RPMRC_OK;
+	    break;
+	case RPMRC_OK:
+	    fi = rpmfiNewArchiveReader(payload, files, RPMFI_ITER_READ_ARCHIVE);
+	    if (fi == NULL) {
+		rc = RPMERR_BAD_MAGIC;
+		goto exit;
+	    }
+	    break;
+	default:
+	    rc = RPMRC_FAIL;
     }
 
     /* Detect and create directories not explicitly in package. */
@@ -988,7 +989,7 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
 	    } else if (S_ISREG(fp->sb.st_mode)) {
 		if (rc == RPMERR_ENOENT) {
 		    rc = fsmMkfile(fi, fp, files, psm, nodigest,
-			&firstlink, &firstlinkfile);
+				   &firstlink, &firstlinkfile);
 		}
             } else if (S_ISDIR(fp->sb.st_mode)) {
                 if (rc == RPMERR_ENOENT) {
@@ -1096,7 +1097,6 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
     rpmswAdd(rpmtsOp(ts, RPMTS_OP_DIGEST), fdOp(payload, FDSTAT_DIGEST));
 
 exit:
-    h = headerFree(h);
     fi = rpmfiFree(fi);
     Fclose(payload);
     free(tid);
