@@ -223,7 +223,7 @@ rpm_loff_t find(const unsigned char *digest, reflink_state state) {
     return offset;
 }
 
-static rpmRC reflink_fsm_file_pre(rpmPlugin plugin, rpmfi fi, const char* path,
+static rpmRC reflink_fsm_file_install(rpmPlugin plugin, rpmfi fi, const char* path,
                                   mode_t file_mode, rpmFsmOp op)
 {
     struct file_clone_range fcr;
@@ -355,5 +355,5 @@ struct rpmPluginHooks_s reflink_hooks = {
     .cleanup = reflink_cleanup,
     .psm_pre = reflink_psm_pre,
     .psm_post = reflink_psm_post,
-    .fsm_file_pre = reflink_fsm_file_pre,
+    .fsm_file_install = reflink_fsm_file_install,
 };
