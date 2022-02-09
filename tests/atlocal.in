@@ -50,6 +50,19 @@ else
     CAP_DISABLED=true;
 fi
 
+FSTYPE=$(stat -f -c %T /)
+REFLINKABLE_FS=("xfs" "brtfs")
+
+REFLINK_DISABLED=true;
+for item in "${REFLINKABLE_FS[@]}"
+do
+    if test "${FSTYPE}" = "${item}"
+    then
+	REFLINK_DISABLED=false;
+	break
+    fi
+done
+
 function setup_env()
 {
     if [ -d testing ]; then

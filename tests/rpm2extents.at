@@ -94,3 +94,18 @@ runroot rpmkeys -Kv /tmp/hello-2.0-1.x86_64-signed.rpm; echo $?
 ],
 [])
 AT_CLEANUP
+
+AT_SETUP([rpm2extents install package])
+AT_KEYWORDS([rpm2extents install package])
+AT_SKIP_IF([$REFLINK_DISABLED])
+AT_CHECK([
+RPMDB_INIT
+
+runroot_other cat /data/RPMS/hello-2.0-1.x86_64.rpm | runroot_other rpm2extents SHA256 > ${RPMTEST}/tmp/hello-2.0-1.x86_64.rpm 2> /dev/null
+runroot_plugins rpm -i --nodigest --nodeps --undefine=%__transaction_dbus_announce /tmp/hello-2.0-1.x86_64.rpm
+test -f ${RPMTEST}/usr/bin/hello
+],
+[0],
+[],
+[])
+AT_CLEANUP
