@@ -53,7 +53,6 @@ struct filedata_s {
     int stage;
     int setmeta;
     int skip;
-    int plugin_contents;
     rpmFileAction action;
     const char *suffix;
     char *fpath;
@@ -921,23 +920,12 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
 	/* Remap file perms, owner, and group. */
 	rc = rpmfiStat(fi, 1, &fp->sb);
 
+	setFileState(fs, fx);
 	fsmDebug(fp->fpath, fp->action, &fp->sb);
 
 	/* Run fsm file pre hook for all plugins */
 	rc = rpmpluginsCallFsmFilePre(plugins, fi, fp->fpath,
 				      fp->sb.st_mode, fp->action);
-	fp->plugin_contents = 0;
-	switch (rc) {
-	case RPMRC_OK:
-	    setFileState(fs, fx);
-	    break;
-	case RPMRC_PLUGIN_CONTENTS:
-	    fp->plugin_contents = 1;
-	    // reduce reads on cpio to this value. Could be zero if
-	    // this is from a hard link.
-	    rc = RPMRC_OK;
-	    break;
-	}
 	fp->stage = FILE_PRE;
     }
     fi = rpmfiFree(fi);
@@ -992,14 +980,15 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
 	    if (fp->action == FA_TOUCH)
 		continue;
 
-            if (S_ISREG(fp->sb.st_mode)) {
+	    rpmRC plugin_rc = rpmpluginsCallFsmFileInstall(plugins, fi, fp->fpath, fp->sb.st_mode, fp->action);
+	    if(!(plugin_rc == RPMRC_PLUGIN_CONTENTS || plugin_rc == RPMRC_OK)){
+		rc = plugin_rc;
+	    } else if(plugin_rc == RPMRC_PLUGIN_CONTENTS){
+		rc = RPMRC_OK;
+	    } else if (S_ISREG(fp->sb.st_mode)) {
 		if (rc == RPMERR_ENOENT) {
-		    if(fp->plugin_contents) {
-			rc = RPMRC_OK;
-		    }else {
-			rc = fsmMkfile(fi, fp, files, psm, nodigest,
-			    &firstlink, &firstlinkfile);
-		    }
+		    rc = fsmMkfile(fi, fp, files, psm, nodigest,
+			&firstlink, &firstlinkfile);
 		}
             } else if (S_ISDIR(fp->sb.st_mode)) {
                 if (rc == RPMERR_ENOENT) {
