@@ -109,3 +109,17 @@ test -f ${RPMTEST}/usr/bin/hello
 [],
 [])
 AT_CLEANUP
+
+AT_SETUP([reflink ignores non-transcoded package])
+AT_KEYWORDS([reflink])
+AT_CHECK([
+RPMDB_INIT
+
+runroot_plugins rpm -i --nodigest --nodeps --undefine=%__transaction_dbus_announce /data/RPMS/hello-2.0-1.x86_64.rpm && exit $?
+# Check that the file is properly installed in chroot
+test -f ${RPMTEST}/usr/bin/hello
+],
+[0],
+[],
+[])
+AT_CLEANUP
