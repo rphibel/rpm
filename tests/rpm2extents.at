@@ -32,7 +32,7 @@ AT_CLEANUP
 # Check that transcoder writes checksig return code and content.
 #
 AT_SETUP([rpm2extents signature])
-AT_KEYWORDS([rpm2extents digest signature])
+AT_KEYWORDS([rpm2extents])
 AT_CHECK([
 RPMDB_INIT
 
@@ -64,7 +64,7 @@ RPMSignOutput Content     Header V4 RSA/SHA256 Signature, key ID 1964c5fc: OK
 AT_CLEANUP
 
 AT_SETUP([rpm2extents signature verification])
-AT_KEYWORDS([rpm2extents digest signature])
+AT_KEYWORDS([rpm2extents])
 AT_CHECK([
 RPMDB_INIT
 
@@ -96,7 +96,7 @@ runroot rpmkeys -Kv /tmp/hello-2.0-1.x86_64-signed.rpm; echo $?
 AT_CLEANUP
 
 AT_SETUP([rpm2extents install package])
-AT_KEYWORDS([rpm2extents install package])
+AT_KEYWORDS([rpm2extents reflink])
 AT_SKIP_IF([$REFLINK_DISABLED])
 AT_CHECK([
 RPMDB_INIT
