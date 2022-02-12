@@ -123,3 +123,18 @@ test -f ${RPMTEST}/usr/bin/hello
 [],
 [])
 AT_CLEANUP
+
+AT_SETUP([reflink hardlink package])
+AT_KEYWORDS([reflink hardlink])
+AT_SKIP_IF([$REFLINK_DISABLED])
+AT_CHECK([
+RPMDB_INIT
+
+PKG=hlinktest-1.0-1.noarch.rpm
+runroot_other cat /data/RPMS/${PKG} | runroot_other rpm2extents SHA256 > ${RPMTEST}/tmp/${PKG} 2> /dev/null
+runroot_plugins rpm -i --nodigest --nodeps --undefine=%__transaction_dbus_announce /tmp/${PKG}
+],
+[0],
+[],
+[])
+AT_CLEANUP

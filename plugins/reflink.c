@@ -29,7 +29,7 @@
 #undef HTDATATYPE
 #define HASHTYPE inodeIndexHash
 #define HTKEYTYPE rpm_ino_t
-#define HTDATATYPE int
+#define HTDATATYPE const char *
 #include "lib/rpmhash.H"
 #include "lib/rpmhash.C"
 
@@ -163,7 +163,7 @@ static rpmRC reflink_psm_pre(rpmPlugin plugin, rpmte te) {
 	    return RPMRC_FAIL;
 	}
 	state->inodeIndexes = inodeIndexHashCreate(
-	    state->keys, inodeId, inodeCmp, NULL, NULL
+	    state->keys, inodeId, inodeCmp, NULL, (inodeIndexHashFreeData)rfree
 	);
     }
 
@@ -226,7 +226,7 @@ static rpmRC reflink_fsm_file_install(rpmPlugin plugin, rpmfi fi, const char* pa
     struct file_clone_range fcr;
     rpm_loff_t size;
     int dst, rc;
-    int *hlix;
+    const char **hl_target = NULL;
 
     reflink_state state = rpmPluginGetData(plugin);
     if (state->table == NULL) {
@@ -243,18 +243,15 @@ static rpmRC reflink_fsm_file_install(rpmPlugin plugin, rpmfi fi, const char* pa
 	/* check for hard link entry in table. GetEntry overwrites hlix with
 	 * the address of the first match.
 	 */
-	if (inodeIndexHashGetEntry(state->inodeIndexes, inode, &hlix, NULL,
-	                           NULL)) {
+	if (inodeIndexHashGetEntry(state->inodeIndexes, inode, &hl_target,
+				   NULL, NULL)) {
 	    /* entry is in table, use hard link */
-	    char *fn = rpmfilesFN(state->files, hlix[0]);
-	    if (link(fn, path) != 0) {
+	    if (link(hl_target[0], path) != 0) {
 		rpmlog(RPMLOG_ERR,
 		       _("reflink: Unable to hard link %s -> %s due to %s\n"),
-		       fn, path, strerror(errno));
-		free(fn);
+		       hl_target[0], path, strerror(errno));
 		return RPMRC_FAIL;
 	    }
-	    free(fn);
 	    return RPMRC_PLUGIN_CONTENTS;
 	}
 	/* if we didn't hard link, then we'll track this inode as being
@@ -262,7 +259,7 @@ static rpmRC reflink_fsm_file_install(rpmPlugin plugin, rpmfi fi, const char* pa
 	 */
 	if (rpmfiFNlink(fi) > 1) {
 	    /* minor optimization: only store files with more than one link */
-	    inodeIndexHashAddEntry(state->inodeIndexes, inode, rpmfiFX(fi));
+	    inodeIndexHashAddEntry(state->inodeIndexes, inode, rstrdup(path));
 	}
 	/* derived from wfd_open in fsm.c */
 	mode_t old_umask = umask(0577);
