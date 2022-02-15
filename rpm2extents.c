@@ -84,13 +84,15 @@ static int FDWriteDigests(
 
     len = sizeof(fdilength);
     if (Fwrite(&fdilength, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write input length %zd\n"), fdilength);
+	rpmlog(RPMLOG_ERR, _("Unable to write input length %zd: %d, %s\n"),
+	       fdilength, errno, strerror(errno));
 	goto exit;
     }
     len = sizeof(algos_len);
     if (Fwrite(&algos_len, len, 1, fdo) != len) {
 	algo_digest_len = (uint32_t)filedigest_len;
-	fprintf(stderr, _("Unable to write number of digests\n"));
+	rpmlog(RPMLOG_ERR, _("Unable to write number of digests: %d, %s\n"),
+	       errno, strerror(errno));
 	goto exit;
     }
     for (algo = 0; algo < algos_len; algo++) {
@@ -102,24 +104,28 @@ static int FDWriteDigests(
 
 	len = sizeof(algo_name_len);
 	if (Fwrite(&algo_name_len, len, 1, fdo) != len) {
-	    fprintf(stderr,
-		    _("Unable to write digest algo name length\n"));
+	    rpmlog(RPMLOG_ERR,
+		   _("Unable to write digest algo name length: %d, %s\n"),
+		   errno, strerror(errno));
 	    goto exit;
 	}
 	len = sizeof(algo_digest_len);
 	if (Fwrite(&algo_digest_len, len, 1, fdo) != len) {
-	    fprintf(stderr,
-		    _("Unable to write number of bytes for digest\n"));
+	    rpmlog(RPMLOG_ERR,
+		   _("Unable to write number of bytes for digest: %d, %s\n"),
+		   errno, strerror(errno));
 	     goto exit;
 	}
 	if (Fwrite(algo_name, algo_name_len, 1, fdo) != algo_name_len) {
-	    fprintf(stderr, _("Unable to write digest algo name\n"));
+	    rpmlog(RPMLOG_ERR, _("Unable to write digest algo name: %d, %s\n"),
+		   errno, strerror(errno));
 	    goto exit;
 	}
 	if (Fwrite(filedigest, algo_digest_len, 1, fdo ) != algo_digest_len) {
-	    fprintf(stderr,
-		    _("Unable to write digest value %u, %zu\n"),
-		    algo_digest_len, filedigest_len);
+	    rpmlog(RPMLOG_ERR,
+		   _("Unable to write digest value %u, %zu: %d, %s\n"),
+		   algo_digest_len, filedigest_len,
+		   errno, strerror(errno));
 	    goto exit;
 	}
     }
@@ -133,22 +139,29 @@ static rpmRC FDWriteSignaturesValidation(FD_t fdo, int rpmvsrc, char *msg) {
     rpmRC rc = RPMRC_FAIL;
 
     if(rpmvsrc){
-	fprintf(stderr, _("Error verifying package signatures\n"));
+	rpmlog(RPMLOG_WARNING,
+	       _("Error verifying package signatures:\n%s\n"), msg);
     }
 
     len = sizeof(rpmvsrc);
     if (Fwrite(&rpmvsrc, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write signature verification RC code %d\n"), rpmvsrc);
+	rpmlog(RPMLOG_ERR,
+	       _("Unable to write signature verification RC code %d: %d, %s\n"),
+	       rpmvsrc, errno, strerror(errno));
 	goto exit;
     }
     size_t content_len = msg ? strlen(msg) : 0;
     len = sizeof(content_len);
     if (Fwrite(&content_len, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write signature verification output length %zd\n"), content_len);
+	rpmlog(RPMLOG_ERR,
+	       _("Unable to write signature verification output length %zd: %d, %s\n"),
+	       content_len, errno, strerror(errno));
 	goto exit;
     }
     if (Fwrite(msg, content_len, 1, fdo) != content_len) {
-	fprintf(stderr, _("Unable to write signature verification output %s\n"), msg);
+	rpmlog(RPMLOG_ERR,
+	       _("Unable to write signature verification output %s: %d, %s\n"),
+	       msg, errno, strerror(errno));
 	goto exit;
     }
 
@@ -174,12 +187,16 @@ static rpmRC validator(FD_t fdi, FD_t digesto, FD_t sigo,
 
     // Write result of digest computation
     if(FDWriteDigests(fdi, digesto, algos, algos_len) != RPMRC_OK) {
-	fprintf(stderr, _("Failed to write digests"));
+	rpmlog(RPMLOG_ERR, _("Failed to write digests: %d, %s\n"),
+	       errno, strerror(errno));
 	goto exit;
     }
 
     // Write result of signature validation.
     if(FDWriteSignaturesValidation(sigo, rpmvsrc, msg)) {
+	rpmlog(RPMLOG_ERR,
+	       _("Failed to write signature verification result: %d, %s\n"),
+	       errno, strerror(errno));
 	goto exit;
     }
     rc = RPMRC_OK;
@@ -226,24 +243,24 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
     fdo = fdDup(STDOUT_FILENO);
 
     if (rpmReadPackageRaw(fdi, &sigh, &h)) {
-	fprintf(stderr, _("Error reading package\n"));
+	rpmlog(RPMLOG_ERR, _("Error reading package\n"));
 	exit(EXIT_FAILURE);
     }
 
     if (rpmLeadWrite(fdo, h))
     {
-	fprintf(stderr, _("Unable to write package lead: %s\n"),
+	rpmlog(RPMLOG_ERR, _("Unable to write package lead: %s\n"),
 		Fstrerror(fdo));
 	exit(EXIT_FAILURE);
     }
 
     if (rpmWriteSignature(fdo, sigh)) {
-	fprintf(stderr, _("Unable to write signature: %s\n"), Fstrerror(fdo));
+	rpmlog(RPMLOG_ERR, _("Unable to write signature: %s\n"), Fstrerror(fdo));
 	exit(EXIT_FAILURE);
     }
 
     if (headerWrite(fdo, h, HEADER_MAGIC_YES)) {
-	fprintf(stderr, _("Unable to write headers: %s\n"), Fstrerror(fdo));
+	rpmlog(RPMLOG_ERR, _("Unable to write headers: %s\n"), Fstrerror(fdo));
 	exit(EXIT_FAILURE);
     }
 
@@ -257,7 +274,7 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
     free(rpmio_flags);
 
     if (gzdi == NULL) {
-	fprintf(stderr, _("cannot re-open payload: %s\n"), Fstrerror(gzdi));
+	rpmlog(RPMLOG_ERR, _("cannot re-open payload: %s\n"), Fstrerror(gzdi));
 	exit(EXIT_FAILURE);
     }
 
@@ -300,7 +317,7 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
 	}
 	pad = pad_to(pos, fundamental_block_size);
 	if (Fwrite(zeros, sizeof(char), pad, fdo) != pad) {
-	    fprintf(stderr, _("Unable to write padding\n"));
+	    rpmlog(RPMLOG_ERR, _("Unable to write padding\n"));
 	    rc = RPMRC_FAIL;
 	    goto exit;
 	}
@@ -313,7 +330,12 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
 	size = rpmfiFSize(fi);
 	rc = rpmfiArchiveReadToFile(fi, fdo, 0);
 	if (rc != RPMRC_OK) {
-	    fprintf(stderr, _("rpmfiArchiveReadToFile failed with %d\n"), rc);
+	    char *errstr = rpmfileStrerror(rc);
+	    rpmlog(RPMLOG_ERR,
+		   _("rpmfiArchiveReadToFile failed while extracting "\
+		   "\"%s\" with RC %d: %s\n"),
+		   rpmfiFN(fi), rc, errstr);
+	    free(errstr);
 	    goto exit;
 	}
 	pos += size;
@@ -326,7 +348,7 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
     validation_pos = pos;
     ssize_t validation_len = ufdCopy(validationi, fdo);
     if (validation_len == -1) {
-	fprintf(stderr, _("validation output ufdCopy failed\n"));
+	rpmlog(RPMLOG_ERR, _("validation output ufdCopy failed\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
@@ -335,25 +357,25 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
 
     len = sizeof(offset_ix);
     if (Fwrite(&offset_ix, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write length of table\n"));
+	rpmlog(RPMLOG_ERR, _("Unable to write length of table\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
     len = sizeof(diglen);
     if (Fwrite(&diglen, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write length of digest\n"));
+	rpmlog(RPMLOG_ERR, _("Unable to write length of digest\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
     len = sizeof(rpm_loff_t);
     for (int x = 0; x < offset_ix; x++) {
 	if (Fwrite(offsets[x].digest, diglen, 1, fdo) != diglen) {
-	    fprintf(stderr, _("Unable to write digest\n"));
+	    rpmlog(RPMLOG_ERR, _("Unable to write digest\n"));
 	    rc = RPMRC_FAIL;
 	    goto exit;
 	}
 	if (Fwrite(&offsets[x].pos, len, 1, fdo) != len) {
-	    fprintf(stderr, _("Unable to write offset\n"));
+	    rpmlog(RPMLOG_ERR, _("Unable to write offset\n"));
 	    rc = RPMRC_FAIL;
 	    goto exit;
 	}
@@ -365,7 +387,7 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
 
     ssize_t digest_len = ufdCopy(digestori, fdo);
     if (digest_len == -1) {
-	fprintf(stderr, _("digest table ufdCopy failed\n"));
+	rpmlog(RPMLOG_ERR, _("digest table ufdCopy failed\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
@@ -378,30 +400,30 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
     pad = pad_to((validation_pos + validation_len + 2 * sizeof(rpm_loff_t) +
 		 sizeof(uint64_t)), fundamental_block_size);
     if (Fwrite(zeros, sizeof(char), pad, fdo) != pad) {
-	fprintf(stderr, _("Unable to write final padding\n"));
+	rpmlog(RPMLOG_ERR, _("Unable to write final padding\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
     zeros = _free(zeros);
     if (Fwrite(&validation_pos, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write offset of validation output\n"));
+	rpmlog(RPMLOG_ERR, _("Unable to write offset of validation output\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
     if (Fwrite(&digest_table_pos, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write offset of digest table\n"));
+	rpmlog(RPMLOG_ERR, _("Unable to write offset of digest table\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
     if (Fwrite(&digest_pos, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write offset of validation table\n"));
+	rpmlog(RPMLOG_ERR, _("Unable to write offset of validation table\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
     extents_magic_t magic = EXTENTS_MAGIC;
     len = sizeof(magic);
     if (Fwrite(&magic, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write magic\n"));
+	rpmlog(RPMLOG_ERR, _("Unable to write magic\n"));
 	rc = RPMRC_FAIL;
 	goto exit;
     }
@@ -426,7 +448,9 @@ static off_t ufdTee(FD_t sfd, FD_t *fds, int len)
 	    for(int i=0; i < len; i++) {
 		wrbytes = Fwrite(buf, sizeof(buf[0]), rdbytes, fds[i]);
 		if (wrbytes != rdbytes) {
-		    fprintf(stderr, "Error wriing to FD %d: %s\n", i, Fstrerror(fds[i]));
+		    rpmlog(RPMLOG_ERR,
+			   _("Error wriing to FD %d: %s\n"),
+			   i, Fstrerror(fds[i]));
 		    total = -1;
 		    break;
 		}
@@ -460,22 +484,22 @@ static rpmRC teeRpm(FD_t fdi, uint8_t algos[], uint32_t algos_len) {
     FD_t fds[2];
 
      if (pipe(processorpipefd) == -1) {
-	fprintf(stderr, _("Processor pipe failure\n"));
+	rpmlog(RPMLOG_ERR, _("Processor pipe failure\n"));
 	return RPMRC_FAIL;
     }
 
     if (pipe(validatorpipefd) == -1) {
-	fprintf(stderr, _("Validator pipe failure\n"));
+	rpmlog(RPMLOG_ERR, _("Validator pipe failure\n"));
 	return RPMRC_FAIL;
     }
 
     if (pipe(meta_digestpipefd) == -1) {
-	fprintf(stderr, _("Meta digest pipe failure\n"));
+	rpmlog(RPMLOG_ERR, _("Meta digest pipe failure\n"));
 	return RPMRC_FAIL;
     }
 
     if (pipe(meta_rpmsignpipefd) == -1) {
-	fprintf(stderr, _("Meta rpm signature pipe failure\n"));
+	rpmlog(RPMLOG_ERR, _("Meta rpm signature pipe failure\n"));
 	return RPMRC_FAIL;
     }
 
@@ -494,7 +518,7 @@ static rpmRC teeRpm(FD_t fdi, uint8_t algos[], uint32_t algos_len) {
 	close(meta_rpmsignpipefd[1]);
 	rc = validator(fdi, digesto, sigo, algos, algos_len);
 	if(rc != RPMRC_OK) {
-	    fprintf(stderr, _("Validator failed\n"));
+	    rpmlog(RPMLOG_ERR, _("Validator failed with RC %d\n"), rc);
 	}
 	Fclose(fdi);
 	Fclose(digesto);
@@ -522,7 +546,7 @@ static rpmRC teeRpm(FD_t fdi, uint8_t algos[], uint32_t algos_len) {
 
 	    rc = process_package(fdi, digestori, sigi);
 	    if(rc != RPMRC_OK) {
-		fprintf(stderr, _("Validator failed\n"));
+		rpmlog(RPMLOG_ERR, _("Package processor failed: %d\n"), rc);
 	    }
 	    Fclose(digestori);
 	    Fclose(sigi);
@@ -552,19 +576,19 @@ static rpmRC teeRpm(FD_t fdi, uint8_t algos[], uint32_t algos_len) {
 	    rc = RPMRC_OK;
 	    offt = ufdTee(fdi, fds, 2);
 	    if(offt == -1){
-		fprintf(stderr, _("Failed to tee RPM\n"));
+		rpmlog(RPMLOG_ERR, _("Failed to tee RPM\n"));
 		rc = RPMRC_FAIL;
 	    }
 	    Fclose(fds[0]);
 	    Fclose(fds[1]);
 	    w = waitpid(cpids[0], &wstatus, 0);
 	    if (w == -1) {
-		fprintf(stderr, _("waitpid cpids[0] failed\n"));
+		rpmlog(RPMLOG_ERR, _("waitpid cpids[0] failed\n"));
 		rc = RPMRC_FAIL;
 	    }
 	    w = waitpid(cpids[1], &wstatus, 0);
 	    if (w == -1) {
-		fprintf(stderr, _("waitpid cpids[1] failed\n"));
+		rpmlog(RPMLOG_ERR, _("waitpid cpids[1] failed\n"));
 		rc = RPMRC_FAIL;
 	    }
 	}
@@ -585,8 +609,8 @@ int main(int argc, char *argv[]) {
     poptSetOtherOptionHelp(optCon, "[OPTIONS]* <DIGESTALGO>");
 
     if (poptPeekArg(optCon) == NULL) {
-	fprintf(stderr,
-		_("Need at least one DIGESTALGO parameter, e.g. 'SHA256'\n"));
+	rpmlog(RPMLOG_ERR,
+	       _("Need at least one DIGESTALGO parameter, e.g. 'SHA256'\n"));
 	poptPrintUsage(optCon, stderr, 0);
 	exit(EXIT_FAILURE);
     }
@@ -598,9 +622,9 @@ int main(int argc, char *argv[]) {
     for (int x = 0; x < nb_algos; x++) {
 	if (pgpStringVal(PGPVAL_HASHALGO, args[x], &algos[x]) != 0)
 	{
-	    fprintf(stderr,
-		    _("Unable to resolve '%s' as a digest algorithm, exiting\n"),
-		    args[x]);
+	    rpmlog(RPMLOG_ERR,
+		   _("Unable to resolve '%s' as a digest algorithm, exiting\n"),
+		   args[x]);
 	    exit(EXIT_FAILURE);
 	}
     }
