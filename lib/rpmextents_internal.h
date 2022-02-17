@@ -29,6 +29,12 @@ struct __attribute__ ((__packed__)) extents_footer_t {
     extents_magic_t magic;
 };
 
+/** \ingroup rpmextents
+ * Checks the results of the signature verification ran during transcoding.
+ * @param fd	The FD_t of the transcoded RPM
+ * @return	The number of checks that `rpmvsVerify` failed during transcoding.
+ */
+int extentsVerifySigs(FD_t fd);
 
 /** \ingroup rpmextents
  * Read the RPM Extents footer from a file descriptor.
