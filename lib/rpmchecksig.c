@@ -345,7 +345,7 @@ static int vfyFDCb(struct rpmsinfo_s *sinfo, void *cbdata)
     struct vfydatafd_s *vd = cbdata;
     char *vmsg, *msg;
     size_t n;
-    size_t remainder = BUFSIZ - vd->len;
+    size_t remainder = BUFSIZ - vd->len >= 0 ? BUFSIZ - vd->len : 0;
 
     vmsg = rpmsinfoMsg(sinfo);
     rasprintf(&msg, "    %s\n", vmsg);
