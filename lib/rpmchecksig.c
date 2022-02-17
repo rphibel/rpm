@@ -223,29 +223,19 @@ exit:
 
 static int rpmpkgVerifySigsTranscoded(FD_t fd){
     rpm_loff_t current;
-    uint64_t magic;
-    rpm_loff_t offset;
     int32_t rc;
     size_t len;
     uint64_t content_len;
     char *content = NULL;
+    struct extents_footer_t footer;
 
     current = Ftell(fd);
 
-    if(Fseek(fd, -(sizeof(magic) + 3 * sizeof(offset) ), SEEK_END) < 0) {
-	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: failed to seek for offset\n"));
+    if(extentsFooterFromFD(fd, &footer) != RPMRC_OK) {
 	rc = -1;
 	goto exit;
     }
-
-    len = sizeof(offset);
-    if (Fread(&offset, len, 1, fd) != len) {
-	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: Failed to read Signature Verification offset\n"));
-	rc = -1;
-	goto exit;
-    }
-
-    if(Fseek(fd,  offset, SEEK_SET) < 0) {
+    if(Fseek(fd, footer.offsets.checksig_offset, SEEK_SET) < 0) {
 	rpmlog(RPMLOG_ERR, _("rpmpkgVerifySigsTranscoded: Failed to seek signature verification offset\n"));
 	rc = -1;
 	goto exit;
