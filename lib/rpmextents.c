@@ -89,7 +89,6 @@ rpmRC extentsFooterFromFD(FD_t fd, struct extents_footer_t *footer) {
 	goto exit;
     }
     if (footer->magic != EXTENTS_MAGIC) {
-	rpmlog(RPMLOG_ERR, _("isTranscodedRpm: not transcoded\n"));
 	rc = RPMRC_NOTFOUND;
 	goto exit;
     }
