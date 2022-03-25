@@ -59,6 +59,50 @@ struct reflink_state_s {
 
 typedef struct reflink_state_s * reflink_state;
 
+/*
+ * bsearch_r: implements a re-entrant version of stdlib's bsearch.
+ * code taken and adapted from /usr/include/bits/stdlib-bsearch.h
+ */
+inline void *
+bsearch_r (const void *__key, const void *__base, size_t __nmemb, size_t __size,
+	 __compar_d_fn_t __compar, void *__arg)
+{
+  size_t __l, __u, __idx;
+  const void *__p;
+  int __comparison;
+
+  __l = 0;
+  __u = __nmemb;
+  while (__l < __u)
+    {
+      __idx = (__l + __u) / 2;
+      __p = (const void *) (((const char *) __base) + (__idx * __size));
+      __comparison = (*__compar) (__key, __p, __arg);
+      if (__comparison < 0)
+	__u = __idx;
+      else if (__comparison > 0)
+	__l = __idx + 1;
+      else
+	{
+#if __GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wcast-qual"
+#endif
+	  return (void *) __p;
+#if __GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic pop
+#endif
+	}
+    }
+
+  return NULL;
+}
+
+static int cmpdigest(const void *k1, const void *k2, void *data) {
+    rpmlog(RPMLOG_DEBUG, _("reflink: cmpdigest k1=%p k2=%p\n"), k1, k2);
+    return memcmp(k1, k2, *(int *)data);
+}
+
 static int inodeCmp(rpm_ino_t a, rpm_ino_t b)
 {
     return (a != b);
@@ -198,21 +242,13 @@ static rpmRC reflink_psm_post(rpmPlugin plugin, rpmte te, int res)
 rpm_loff_t find(const unsigned char *digest, reflink_state state);
 
 rpm_loff_t find(const unsigned char *digest, reflink_state state) {
-# if defined(__GNUC__)
-    /* GCC nested function because bsearch's comparison function can't access
-     * state-keysize otherwise
-     */
-    int cmpdigest(const void *k1, const void *k2) {
-	rpmlog(RPMLOG_DEBUG, _("reflink: cmpdigest k1=%p k2=%p\n"), k1, k2);
-	return memcmp(k1, k2, state->keysize);
-    }
-# endif
     rpmlog(RPMLOG_DEBUG,
-	   _("reflink: bsearch(key=%p, base=%p, nmemb=%d, size=%lu)\n"),
+	   _("reflink: bsearch_r(key=%p, base=%p, nmemb=%d, size=%lu)\n"),
 	   digest, state->table, state->keys,
 	   state->keysize + sizeof(rpm_loff_t));
-    char *entry = bsearch(digest, state->table, state->keys,
-			  state->keysize + sizeof(rpm_loff_t), cmpdigest);
+    char *entry = bsearch_r(digest, state->table, state->keys,
+			    state->keysize + sizeof(rpm_loff_t), cmpdigest,
+			    &state->keysize);
     if (entry == NULL) {
 	return NOT_FOUND;
     }
