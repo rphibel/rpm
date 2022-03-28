@@ -10,7 +10,7 @@
 #include "lib/rpmextents_internal.h"
 
 
-int extentsVerifySigs(FD_t fd){
+int extentsVerifySigs(FD_t fd, int print_content){
     rpm_loff_t current;
     int32_t rc;
     size_t len;
@@ -36,24 +36,26 @@ int extentsVerifySigs(FD_t fd){
 	goto exit;
     }
 
-    len = sizeof(content_len);
-    if (Fread(&content_len, len, 1, fd) != len) {
-	rpmlog(RPMLOG_ERR, _("extentsVerifySigs: Failed to read signature content length\n"));
-	goto exit;
-    }
+    if(print_content) {
+	len = sizeof(content_len);
+	if (Fread(&content_len, len, 1, fd) != len) {
+	    rpmlog(RPMLOG_ERR, _("extentsVerifySigs: Failed to read signature content length\n"));
+	    goto exit;
+	}
 
-    content = rmalloc(content_len + 1);
-    if(content == NULL) {
-	rpmlog(RPMLOG_ERR, _("extentsVerifySigs: Failed to allocate memory to read signature content\n"));
-	goto exit;
-    }
-    content[content_len] = 0;
-    if (Fread(content, content_len, 1, fd) != content_len) {
-	rpmlog(RPMLOG_ERR, _("extentsVerifySigs: Failed to read signature content\n"));
-	goto exit;
-    }
+	content = rmalloc(content_len + 1);
+	if(content == NULL) {
+	    rpmlog(RPMLOG_ERR, _("extentsVerifySigs: Failed to allocate memory to read signature content\n"));
+	    goto exit;
+	}
+	content[content_len] = 0;
+	if (Fread(content, content_len, 1, fd) != content_len) {
+	    rpmlog(RPMLOG_ERR, _("extentsVerifySigs: Failed to read signature content\n"));
+	    goto exit;
+	}
 
-    rpmlog(RPMLOG_NOTICE, "%s", content);
+	rpmlog(RPMLOG_NOTICE, "%s", content);
+    }
 exit:
     if(content){
 	rfree(content);
@@ -79,7 +81,6 @@ rpmRC extentsFooterFromFD(FD_t fd, struct extents_footer_t *footer) {
 
     len = sizeof(struct extents_footer_t);
     if(Fseek(fd, -len, SEEK_END) < 0) {
-	rpmlog(RPMLOG_ERR, _("isTranscodedRpm: failed to seek for footer: %s\n"), strerror(errno));
 	rc = RPMRC_FAIL;
 	goto exit;
     }

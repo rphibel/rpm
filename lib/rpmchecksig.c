@@ -229,7 +229,7 @@ static int rpmpkgVerifySigs(rpmKeyring keyring, int vfylevel, rpmVSFlags flags,
 
 
     if(isTranscodedRpm(fd) == RPMRC_OK){
-	return extentsVerifySigs(fd);
+	return extentsVerifySigs(fd, 1);
     }
 
     struct rpmvs_s *vs = rpmvsCreate(vfylevel, flags, keyring);
