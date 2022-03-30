@@ -1289,8 +1289,8 @@ static int verifyPackageFiles(rpmts ts, rpm_loff_t total)
 	FD_t fd = rpmtsNotify(ts, p, RPMCALLBACK_INST_OPEN_FILE, 0, 0);
 	if(fd != NULL && isTranscodedRpm(fd) == RPMRC_OK) {
 	    /* Transcoded RPMs are validated at transcoding time */
-	    prc = RPMRC_OK;
-	    verified = 1;
+	    prc = extentsVerifySigs(fd, 0);
+	    verified = prc == RPMRC_OK;
 	} else {
 	    if (fd != NULL) {
 		prc = rpmpkgRead(vs, fd, NULL, NULL, &vd.msg);
