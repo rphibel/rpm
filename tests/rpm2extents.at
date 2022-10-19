@@ -95,6 +95,17 @@ runroot rpmkeys -Kv /tmp/hello-2.0-1.x86_64-signed.rpm; echo $?
 [])
 AT_CLEANUP
 
+# check that package in denylist is not transcoded
+AT_SETUP([rpm2extents denylist])
+AT_KEYWORDS([rpm2extents])
+AT_CHECK([
+export LIBREPO_TRANSCODE_RPMS_DENYLIST="vim,hello,cowsay"
+runroot_other cat /data/RPMS/hello-2.0-1.x86_64.rpm | runroot_other rpm2extents SHA256 | runroot_other cmp /data/RPMS/hello-2.0-1.x86_64.rpm -],
+[0],
+[],
+[ignore])
+AT_CLEANUP
+
 AT_SETUP([rpm2extents install package])
 AT_KEYWORDS([rpm2extents reflink])
 AT_SKIP_IF([$REFLINK_DISABLED])

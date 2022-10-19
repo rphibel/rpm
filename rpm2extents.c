@@ -134,6 +134,28 @@ exit:
     return rc;
 }
 
+/**
+ * Check if package is in deny list.
+ * @param package_name	package name
+ * @return 		true if package is in deny list
+ */
+static inline int isInDenyList(char * package_name)
+{
+    int is_in_deny_list = 0;
+    if (package_name) {
+	char *e_denylist = getenv("LIBREPO_TRANSCODE_RPMS_DENYLIST");
+	char *denytlist_item = strtok(e_denylist, ",");
+	while (denytlist_item) {
+	    if (strstr(package_name, denytlist_item)) {
+		is_in_deny_list = 1;
+		break;
+	    }
+	    denytlist_item = strtok(NULL, ",");
+	}
+    }
+	return is_in_deny_list;
+}
+
 static rpmRC FDWriteSignaturesValidation(FD_t fdo, int rpmvsrc, char *msg) {
     size_t len;
     rpmRC rc = RPMRC_FAIL;
@@ -239,15 +261,41 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
     uint32_t offset_ix = 0;
     size_t len;
     int next = 0;
+	struct rpmlead_s l;
+    rpmfiles files = NULL;
+    rpmfi fi = NULL;
+    char *msg = NULL;
 
     fdo = fdDup(STDOUT_FILENO);
 
+    rc = rpmLeadReadAndReturn(fdi, &msg, &l);
+    if (rc != RPMRC_OK)
+	goto exit;
+
+    /* Skip conversion if package is in deny list */
+    if (isInDenyList(l.name)) {
+	if (rpmLeadWrite(fdo, l)) {
+		fprintf(stderr, _("Unable to write package lead: %s\n"),
+		Fstrerror(fdo));
+	    rc = RPMRC_FAIL;
+	    goto exit;
+	}
+
+	ssize_t fdilength = ufdCopy(fdi, fdo);
+	if (fdilength == -1) {
+	    fprintf(stderr, _("process_package cat failed\n"));
+	    rc = RPMRC_FAIL;
+	    goto exit;
+	}
+
+	goto exit;
+    } else {
     if (rpmReadPackageRaw(fdi, &sigh, &h)) {
 	rpmlog(RPMLOG_ERR, _("Error reading package\n"));
 	exit(EXIT_FAILURE);
     }
 
-    if (rpmLeadWrite(fdo, h))
+    if (rpmLeadWriteFromHeader(fdo, h))
     {
 	rpmlog(RPMLOG_ERR, _("Unable to write package lead: %s\n"),
 		Fstrerror(fdo));
@@ -264,38 +312,41 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
 	exit(EXIT_FAILURE);
     }
 
-    /* Retrieve payload size and compression type. */
-    {
-	const char *compr = headerGetString(h, RPMTAG_PAYLOADCOMPRESSOR);
-	rpmio_flags = rstrscat(NULL, "r.", compr ? compr : "gzip", NULL);
-    }
+	/* Retrieve payload size and compression type. */
+	{
+	    const char *compr =
+		headerGetString(h, RPMTAG_PAYLOADCOMPRESSOR);
+	    rpmio_flags =
+		rstrscat(NULL, "r.", compr ? compr : "gzip", NULL);
+	}
 
-    gzdi = Fdopen(fdi, rpmio_flags);	/* XXX gzdi == fdi */
-    free(rpmio_flags);
+	gzdi = Fdopen(fdi, rpmio_flags);	/* XXX gzdi == fdi */
+	free(rpmio_flags);
 
     if (gzdi == NULL) {
 	rpmlog(RPMLOG_ERR, _("cannot re-open payload: %s\n"), Fstrerror(gzdi));
 	exit(EXIT_FAILURE);
     }
 
-    rpmfiles files = rpmfilesNew(NULL, h, 0, RPMFI_KEEPHEADER);
-    rpmfi fi = rpmfiNewArchiveReader(gzdi, files,
-				     RPMFI_ITER_READ_ARCHIVE_CONTENT_FIRST);
+	files = rpmfilesNew(NULL, h, 0, RPMFI_KEEPHEADER);
+	fi = rpmfiNewArchiveReader(gzdi, files,
+				   RPMFI_ITER_READ_ARCHIVE_CONTENT_FIRST);
 
-    /* this is encoded in the file format, so needs to be fixed size (for
-     * now?)
-     */
-    diglen = (uint32_t)rpmDigestLength(rpmfiDigestAlgo(fi));
-    digestSet ds = digestSetCreate(rpmfiFC(fi), digestSetHash, digestSetCmp,
-				   NULL);
-    struct digestoffset offsets[rpmfiFC(fi)];
-    pos = RPMLEAD_SIZE + headerSizeof(sigh, HEADER_MAGIC_YES);
+	/* this is encoded in the file format, so needs to be fixed size (for
+	 * now?)
+	 */
+	diglen = (uint32_t) rpmDigestLength(rpmfiDigestAlgo(fi));
+	digestSet ds =
+	    digestSetCreate(rpmfiFC(fi), digestSetHash, digestSetCmp,
+			    NULL);
+	struct digestoffset offsets[rpmfiFC(fi)];
+	pos = RPMLEAD_SIZE + headerSizeof(sigh, HEADER_MAGIC_YES);
 
-    /* main headers are aligned to 8 byte boundry */
-    pos += pad_to(pos, 8);
-    pos += headerSizeof(h, HEADER_MAGIC_YES);
+	/* main headers are aligned to 8 byte boundry */
+	pos += pad_to(pos, 8);
+	pos += headerSizeof(h, HEADER_MAGIC_YES);
 
-    zeros = xcalloc(fundamental_block_size, 1);
+	zeros = xcalloc(fundamental_block_size, 1);
 
     while (next >= 0) {
 	next = rpmfiNext(fi);
@@ -342,8 +393,8 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
     }
     Fclose(gzdi);	/* XXX gzdi == fdi */
 
-    qsort(offsets, (size_t)offset_ix, sizeof(struct digestoffset),
-	  digestoffsetCmp);
+	qsort(offsets, (size_t) offset_ix, sizeof(struct digestoffset),
+	      digestoffsetCmp);
 
     validation_pos = pos;
     ssize_t validation_len = ufdCopy(validationi, fdo);
@@ -412,6 +463,7 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
 	rc = RPMRC_FAIL;
 	goto exit;
     }
+	}
 
 exit:
     rpmfilesFree(files);
