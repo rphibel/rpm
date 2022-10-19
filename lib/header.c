@@ -1906,6 +1906,11 @@ hdrblob hdrblobFree(hdrblob blob)
 
 rpmRC hdrblobRead(FD_t fd, int magic, int exact_size, rpmTagVal regionTag, hdrblob blob, char **emsg)
 {
+	return hdrblobReadWithBuffer(fd, magic, exact_size, regionTag, blob, emsg, NULL, NULL);
+}
+
+rpmRC hdrblobReadWithBuffer(FD_t fd, int magic, int exact_size, rpmTagVal regionTag, hdrblob blob, char **emsg, char ** buf, int * buf_len)
+{
     int32_t block[4];
     int32_t *bs = (magic != 0) ? &block[0] : &block[2];
     int blen = (magic != 0) ? sizeof(block) : sizeof(block) / 2;
@@ -1930,6 +1935,9 @@ rpmRC hdrblobRead(FD_t fd, int magic, int exact_size, rpmTagVal regionTag, hdrbl
 		_("hdr size(%d): BAD, read returned %d"), blen, xx);
 	goto exit;
     }
+	if (buf && buf_len) {
+		*buf_len += blen;
+	}
     if (magic && memcmp(block, rpm_header_magic, sizeof(rpm_header_magic))) {
 	rasprintf(emsg, _("hdr magic: BAD"));
 	goto exit;
@@ -1954,16 +1962,31 @@ rpmRC hdrblobRead(FD_t fd, int magic, int exact_size, rpmTagVal regionTag, hdrbl
 	rasprintf(emsg, _("hdr blob(%zd): BAD, read returned %d"), nb, xx);
 	goto exit;
     }
+	if (buf && buf_len) {
+		*buf_len += nb;
+	}
 
+	size_t pad = 0;
     if (regionTag == RPMTAG_HEADERSIGNATURES) {
 	size_t sigSize = uc + sizeof(rpm_header_magic);
-	size_t pad = (8 - (sigSize % 8)) % 8;
+	pad = (8 - (sigSize % 8)) % 8;
 	size_t trc;
 	if (pad && (trc = Freadall(fd, block, pad)) != pad) {
 	    rasprintf(emsg, _("sigh pad(%zd): BAD, read %zd bytes"), pad, trc);
 	    goto exit;
 	}
+	if (buf && buf_len) {
+		*buf_len += pad;
+	}
     }
+	
+	if (buf && buf_len) {
+		*buf = xmalloc(*buf_len);
+		memcpy(*buf, rpm_header_magic, sizeof(rpm_header_magic));
+		memcpy(*buf + sizeof(rpm_header_magic), ei, uc);
+		if (pad)
+			memcpy(*buf + sizeof(rpm_header_magic) + uc, block, pad);
+	}
 
     rc = hdrblobInit(ei, uc, regionTag, exact_size, blob, emsg);
 

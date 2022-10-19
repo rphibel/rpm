@@ -161,9 +161,13 @@ rpmRC rpmReadPackageFile(rpmts ts, FD_t fd,
  * @param fd		file handle
  * @param[out] sigp		address of header (or NULL)
  * @param[out] hdrp		address of header (or NULL)
+ * @param[out] sig_header_buf		address of raw signature header data
+ * @param[out] sig_header_buf_len	len of raw signature header data
+ * @param[out] header_buf		address of raw header data
+ * @param[out] header_buf_len	len of raw header data
  * @return		RPMRC_OK on success
  */
-rpmRC rpmReadPackageRaw(FD_t fd, Header * sigp, Header * hdrp);
+rpmRC rpmReadPackageRaw(FD_t fd, Header * sigp, Header * hdrp, char ** sig_header_buf, int * sig_header_buf_len,  char ** header_buf, int * header_buf_len);
 
 /** \ingroup rpmtrans
  * Install source package.

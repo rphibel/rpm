@@ -152,10 +152,18 @@ static rpmRC process_package(FD_t fdi, FD_t validationi)
     uint32_t offset_ix = 0;
     size_t len;
     int next = 0;
+    char *sig_header_buf = NULL;
+    int sig_header_buf_len = 0;
+    char *header_buf = NULL;
+    int header_buf_len = 0;
+    rpmfiles files = NULL;
+    rpmfi fi = NULL;
 
     fdo = fdDup(STDOUT_FILENO);
 
-    if (rpmReadPackageRaw(fdi, &sigh, &h)) {
+    if (rpmReadPackageRaw
+	(fdi, &sigh, &h, &sig_header_buf, &sig_header_buf_len, &header_buf,
+	 &header_buf_len)) {
 	fprintf(stderr, _("Error reading package\n"));
 	exit(EXIT_FAILURE);
     }
@@ -167,163 +175,217 @@ static rpmRC process_package(FD_t fdi, FD_t validationi)
 	exit(EXIT_FAILURE);
     }
 
-    if (rpmWriteSignature(fdo, sigh)) {
-	fprintf(stderr, _("Unable to write signature: %s\n"), Fstrerror(fdo));
-	exit(EXIT_FAILURE);
-    }
-
-    if (headerWrite(fdo, h, HEADER_MAGIC_YES)) {
-	fprintf(stderr, _("Unable to write headers: %s\n"), Fstrerror(fdo));
-	exit(EXIT_FAILURE);
-    }
-
-    /* Retrieve payload size and compression type. */
-    {
-	const char *compr = headerGetString(h, RPMTAG_PAYLOADCOMPRESSOR);
-	rpmio_flags = rstrscat(NULL, "r.", compr ? compr : "gzip", NULL);
-    }
-
-    gzdi = Fdopen(fdi, rpmio_flags);	/* XXX gzdi == fdi */
-    free(rpmio_flags);
-
-    if (gzdi == NULL) {
-	fprintf(stderr, _("cannot re-open payload: %s\n"), Fstrerror(gzdi));
-	exit(EXIT_FAILURE);
-    }
-
-    rpmfiles files = rpmfilesNew(NULL, h, 0, RPMFI_KEEPHEADER);
-    rpmfi fi = rpmfiNewArchiveReader(gzdi, files,
-				     RPMFI_ITER_READ_ARCHIVE_CONTENT_FIRST);
-
-    /* this is encoded in the file format, so needs to be fixed size (for
-     * now?)
-     */
-    diglen = (uint32_t)rpmDigestLength(rpmfiDigestAlgo(fi));
-    digestSet ds = digestSetCreate(rpmfiFC(fi), digestSetHash, digestSetCmp,
-				   NULL);
-    struct digestoffset offsets[rpmfiFC(fi)];
-    pos = RPMLEAD_SIZE + headerSizeof(sigh, HEADER_MAGIC_YES);
-
-    /* main headers are aligned to 8 byte boundry */
-    pos += pad_to(pos, 8);
-    pos += headerSizeof(h, HEADER_MAGIC_YES);
-
-    zeros = xcalloc(fundamental_block_size, 1);
-
-    while (next >= 0) {
-	next = rpmfiNext(fi);
-	if (next == RPMERR_ITER_END) {
-	    rc = RPMRC_OK;
-	    break;
+    /* Skip conversion if package is in deny list */
+    int skip_conversion = 0;
+    const char *package_name = headerGetString(h, RPMTAG_NAME);
+    if (package_name) {
+	char *e_denylist = getenv("LIBREPO_TRANSCODE_RPMS_DENYLIST");
+	char *denytlist_item = strtok(e_denylist, ",");
+	while (denytlist_item) {
+	    if (strcmp(denytlist_item, package_name) == 0) {
+		skip_conversion = 1;
+		break;
+	    }
+	    denytlist_item = strtok(NULL, ",");
 	}
-	mode = rpmfiFMode(fi);
-	if (!S_ISREG(mode) || !rpmfiArchiveHasContent(fi)) {
-	    /* not a regular file, or the archive doesn't contain any content
-	     * for this entry.
-	    */
-	    continue;
+    }
+
+    if (skip_conversion) {
+	if (!sig_header_buf
+	    || Fwrite(sig_header_buf, sig_header_buf_len, 1,
+		      fdo) != sig_header_buf_len) {
+	    fprintf(stderr, _("Unable to write signature header\n"));
+	    rc = RPMRC_FAIL;
+	    goto exit;
 	}
-	digest = rpmfiFDigest(fi, NULL, NULL);
-	if (digestSetGetEntry(ds, digest, NULL)) {
-	    /* This specific digest has already been included, so skip it. */
-	    continue;
+	if (!header_buf
+	    || Fwrite(header_buf, header_buf_len, 1,
+		      fdo) != header_buf_len) {
+	    fprintf(stderr, _("Unable to write header\n"));
+	    rc = RPMRC_FAIL;
+	    goto exit;
 	}
-	pad = pad_to(pos, fundamental_block_size);
+	ssize_t fdilength = ufdCopy(fdi, fdo);
+	if (fdilength == -1) {
+	    fprintf(stderr, _("process_package cat failed\n"));
+	    rc = RPMRC_FAIL;
+	    goto exit;
+	}
+	goto exit;
+    } else {
+	if (rpmWriteSignature(fdo, sigh)) {
+	    fprintf(stderr, _("Unable to write signature: %s\n"),
+		    Fstrerror(fdo));
+	    exit(EXIT_FAILURE);
+	}
+
+	if (headerWrite(fdo, h, HEADER_MAGIC_YES)) {
+	    fprintf(stderr, _("Unable to write headers: %s\n"),
+		    Fstrerror(fdo));
+	    exit(EXIT_FAILURE);
+	}
+
+	/* Retrieve payload size and compression type. */
+	{
+	    const char *compr =
+		headerGetString(h, RPMTAG_PAYLOADCOMPRESSOR);
+	    rpmio_flags =
+		rstrscat(NULL, "r.", compr ? compr : "gzip", NULL);
+	}
+
+	gzdi = Fdopen(fdi, rpmio_flags);	/* XXX gzdi == fdi */
+	free(rpmio_flags);
+
+	if (gzdi == NULL) {
+	    fprintf(stderr, _("cannot re-open payload: %s\n"),
+		    Fstrerror(gzdi));
+	    exit(EXIT_FAILURE);
+	}
+
+	files = rpmfilesNew(NULL, h, 0, RPMFI_KEEPHEADER);
+	fi = rpmfiNewArchiveReader(gzdi, files,
+				   RPMFI_ITER_READ_ARCHIVE_CONTENT_FIRST);
+
+	/* this is encoded in the file format, so needs to be fixed size (for
+	 * now?)
+	 */
+	diglen = (uint32_t) rpmDigestLength(rpmfiDigestAlgo(fi));
+	digestSet ds =
+	    digestSetCreate(rpmfiFC(fi), digestSetHash, digestSetCmp,
+			    NULL);
+	struct digestoffset offsets[rpmfiFC(fi)];
+	pos = RPMLEAD_SIZE + headerSizeof(sigh, HEADER_MAGIC_YES);
+
+	/* main headers are aligned to 8 byte boundry */
+	pos += pad_to(pos, 8);
+	pos += headerSizeof(h, HEADER_MAGIC_YES);
+
+	zeros = xcalloc(fundamental_block_size, 1);
+
+	while (next >= 0) {
+	    next = rpmfiNext(fi);
+	    if (next == RPMERR_ITER_END) {
+		rc = RPMRC_OK;
+		break;
+	    }
+	    mode = rpmfiFMode(fi);
+	    if (!S_ISREG(mode) || !rpmfiArchiveHasContent(fi)) {
+		/* not a regular file, or the archive doesn't contain any content
+		 * for this entry.
+		 */
+		continue;
+	    }
+	    digest = rpmfiFDigest(fi, NULL, NULL);
+	    if (digestSetGetEntry(ds, digest, NULL)) {
+		/* This specific digest has already been included, so skip it. */
+		continue;
+	    }
+	    pad = pad_to(pos, fundamental_block_size);
+	    if (Fwrite(zeros, sizeof(char), pad, fdo) != pad) {
+		fprintf(stderr, _("Unable to write padding\n"));
+		rc = RPMRC_FAIL;
+		goto exit;
+	    }
+	    /* round up to next fundamental_block_size */
+	    pos += pad;
+	    digestSetAddEntry(ds, digest);
+	    offsets[offset_ix].digest = digest;
+	    offsets[offset_ix].pos = pos;
+	    offset_ix++;
+	    size = rpmfiFSize(fi);
+	    rc = rpmfiArchiveReadToFile(fi, fdo, 0);
+	    if (rc != RPMRC_OK) {
+		fprintf(stderr,
+			_("rpmfiArchiveReadToFile failed with %d\n"), rc);
+		goto exit;
+	    }
+	    pos += size;
+	}
+	Fclose(gzdi);		/* XXX gzdi == fdi */
+
+	qsort(offsets, (size_t) offset_ix, sizeof(struct digestoffset),
+	      digestoffsetCmp);
+
+	len = sizeof(offset_ix);
+	if (Fwrite(&offset_ix, len, 1, fdo) != len) {
+	    fprintf(stderr, _("Unable to write length of table\n"));
+	    rc = RPMRC_FAIL;
+	    goto exit;
+	}
+	len = sizeof(diglen);
+	if (Fwrite(&diglen, len, 1, fdo) != len) {
+	    fprintf(stderr, _("Unable to write length of digest\n"));
+	    rc = RPMRC_FAIL;
+	    goto exit;
+	}
+	len = sizeof(rpm_loff_t);
+	for (int x = 0; x < offset_ix; x++) {
+	    if (Fwrite(offsets[x].digest, diglen, 1, fdo) != diglen) {
+		fprintf(stderr, _("Unable to write digest\n"));
+		rc = RPMRC_FAIL;
+		goto exit;
+	    }
+	    if (Fwrite(&offsets[x].pos, len, 1, fdo) != len) {
+		fprintf(stderr, _("Unable to write offset\n"));
+		rc = RPMRC_FAIL;
+		goto exit;
+	    }
+	}
+	validation_pos = (pos + sizeof(offset_ix) + sizeof(diglen) +
+			  offset_ix * (diglen + sizeof(rpm_loff_t))
+	    );
+
+	ssize_t validation_len = ufdCopy(validationi, fdo);
+	if (validation_len == -1) {
+	    fprintf(stderr, _("digest table ufdCopy failed\n"));
+	    rc = RPMRC_FAIL;
+	    goto exit;
+	}
+	/* add more padding so the last file can be cloned. It doesn't matter that
+	 * the table and validation etc are in this space. In fact, it's pretty
+	 * efficient if it is.
+	 */
+
+	pad =
+	    pad_to((validation_pos + validation_len +
+		    2 * sizeof(rpm_loff_t) + sizeof(uint64_t)),
+		   fundamental_block_size);
 	if (Fwrite(zeros, sizeof(char), pad, fdo) != pad) {
-	    fprintf(stderr, _("Unable to write padding\n"));
+	    fprintf(stderr, _("Unable to write final padding\n"));
 	    rc = RPMRC_FAIL;
 	    goto exit;
 	}
-	/* round up to next fundamental_block_size */
-	pos += pad;
-	digestSetAddEntry(ds, digest);
-	offsets[offset_ix].digest = digest;
-	offsets[offset_ix].pos = pos;
-	offset_ix++;
-	size = rpmfiFSize(fi);
-	rc = rpmfiArchiveReadToFile(fi, fdo, 0);
-	if (rc != RPMRC_OK) {
-	    fprintf(stderr, _("rpmfiArchiveReadToFile failed with %d\n"), rc);
-	    goto exit;
-	}
-	pos += size;
-    }
-    Fclose(gzdi);	/* XXX gzdi == fdi */
-
-    qsort(offsets, (size_t)offset_ix, sizeof(struct digestoffset),
-	  digestoffsetCmp);
-
-    len = sizeof(offset_ix);
-    if (Fwrite(&offset_ix, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write length of table\n"));
-	rc = RPMRC_FAIL;
-	goto exit;
-    }
-    len = sizeof(diglen);
-    if (Fwrite(&diglen, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write length of digest\n"));
-	rc = RPMRC_FAIL;
-	goto exit;
-    }
-    len = sizeof(rpm_loff_t);
-    for (int x = 0; x < offset_ix; x++) {
-	if (Fwrite(offsets[x].digest, diglen, 1, fdo) != diglen) {
-	    fprintf(stderr, _("Unable to write digest\n"));
+	zeros = _free(zeros);
+	if (Fwrite(&pos, len, 1, fdo) != len) {
+	    fprintf(stderr, _("Unable to write offset of digest table\n"));
 	    rc = RPMRC_FAIL;
 	    goto exit;
 	}
-	if (Fwrite(&offsets[x].pos, len, 1, fdo) != len) {
-	    fprintf(stderr, _("Unable to write offset\n"));
+	if (Fwrite(&validation_pos, len, 1, fdo) != len) {
+	    fprintf(stderr,
+		    _("Unable to write offset of validation table\n"));
+	    rc = RPMRC_FAIL;
+	    goto exit;
+	}
+	uint64_t magic = MAGIC;
+	len = sizeof(magic);
+	if (Fwrite(&magic, len, 1, fdo) != len) {
+	    fprintf(stderr, _("Unable to write magic\n"));
 	    rc = RPMRC_FAIL;
 	    goto exit;
 	}
     }
-    validation_pos = (
-	pos + sizeof(offset_ix) + sizeof(diglen) +
-	offset_ix * (diglen + sizeof(rpm_loff_t))
-    );
 
-    ssize_t validation_len = ufdCopy(validationi, fdo);
-    if (validation_len == -1) {
-	fprintf(stderr, _("digest table ufdCopy failed\n"));
-	rc = RPMRC_FAIL;
-	goto exit;
-    }
-    /* add more padding so the last file can be cloned. It doesn't matter that
-     * the table and validation etc are in this space. In fact, it's pretty
-     * efficient if it is.
-    */
 
-    pad = pad_to((validation_pos + validation_len + 2 * sizeof(rpm_loff_t) +
-		 sizeof(uint64_t)), fundamental_block_size);
-    if (Fwrite(zeros, sizeof(char), pad, fdo) != pad) {
-	fprintf(stderr, _("Unable to write final padding\n"));
-	rc = RPMRC_FAIL;
-	goto exit;
-    }
-    zeros = _free(zeros);
-    if (Fwrite(&pos, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write offset of digest table\n"));
-	rc = RPMRC_FAIL;
-	goto exit;
-    }
-    if (Fwrite(&validation_pos, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write offset of validation table\n"));
-	rc = RPMRC_FAIL;
-	goto exit;
-    }
-    uint64_t magic = MAGIC;
-    len = sizeof(magic);
-    if (Fwrite(&magic, len, 1, fdo) != len) {
-	fprintf(stderr, _("Unable to write magic\n"));
-	rc = RPMRC_FAIL;
-	goto exit;
-    }
-
-exit:
+  exit:
     rpmfilesFree(files);
     rpmfiFree(fi);
     headerFree(h);
+    headerFree(sigh);
+    free(sig_header_buf);
+    sig_header_buf = NULL;
+    free(header_buf);
+    header_buf = NULL;
     return rc;
 }
 

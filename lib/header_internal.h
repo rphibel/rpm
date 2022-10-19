@@ -75,6 +75,9 @@ RPM_GNUC_INTERNAL
 rpmRC hdrblobRead(FD_t fd, int magic, int exact_size, rpmTagVal regionTag, hdrblob blob, char **emsg);
 
 RPM_GNUC_INTERNAL
+rpmRC hdrblobReadWithBuffer(FD_t fd, int magic, int exact_size, rpmTagVal regionTag, hdrblob blob, char **emsg, char ** buf, int * buf_len);
+
+RPM_GNUC_INTERNAL
 rpmRC hdrblobImport(hdrblob blob, int fast, Header *hdrp, char **emsg);
 
 RPM_GNUC_INTERNAL

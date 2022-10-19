@@ -407,7 +407,7 @@ exit:
     return rc;
 }
 
-rpmRC rpmReadPackageRaw(FD_t fd, Header * sigp, Header * hdrp)
+rpmRC rpmReadPackageRaw(FD_t fd, Header * sigp, Header * hdrp, char ** sig_header_buf, int * sig_header_buf_len,  char ** header_buf, int * header_buf_len)
 {
     char *msg = NULL;
     hdrblob sigblob = hdrblobCreate();
@@ -419,11 +419,11 @@ rpmRC rpmReadPackageRaw(FD_t fd, Header * sigp, Header * hdrp)
     if (rc != RPMRC_OK)
 	goto exit;
 
-    rc = hdrblobRead(fd, 1, 0, RPMTAG_HEADERSIGNATURES, sigblob, &msg);
+    rc = hdrblobReadWithBuffer(fd, 1, 0, RPMTAG_HEADERSIGNATURES, sigblob, &msg, sig_header_buf, sig_header_buf_len);
     if (rc != RPMRC_OK)
 	goto exit;
 
-    rc = hdrblobRead(fd, 1, 1, RPMTAG_HEADERIMMUTABLE, blob, &msg);
+    rc = hdrblobReadWithBuffer(fd, 1, 1, RPMTAG_HEADERIMMUTABLE, blob, &msg, header_buf, header_buf_len);
     if (rc != RPMRC_OK)
 	goto exit;
 
