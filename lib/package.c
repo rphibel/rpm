@@ -259,7 +259,7 @@ rpmRC rpmReadHeader(rpmts ts, FD_t fd, Header *hdrp, char ** msg)
 
     /* OK, blob looks sane, load the header. */
     rc = hdrblobImport(&blob, 0, &h, &buf);
-    
+
 exit:
     if (hdrp && h && rc == RPMRC_OK)
 	*hdrp = headerLink(h);
@@ -445,6 +445,32 @@ exit:
     hdrblobFree(blob);
     headerFree(sigh);
     headerFree(h);
+    free(msg);
+
+    return rc;
+}
+
+rpmRC rpmReadSignatureRaw(FD_t fd, Header * sigp)
+{
+    char *msg = NULL;
+    hdrblob sigblob = hdrblobCreate();
+    Header sigh = NULL;
+
+    rpmRC rc = hdrblobRead(fd, 1, 0, RPMTAG_HEADERSIGNATURES, sigblob, &msg);
+    if (rc != RPMRC_OK)
+	goto exit;
+
+    rc = hdrblobImport(sigblob, 0, &sigh, &msg);
+    if (rc)
+	goto exit;
+
+    *sigp = headerLink(sigh);
+
+exit:
+    if (rc != RPMRC_OK && msg)
+	rpmlog(RPMLOG_ERR, "%s: %s\n", Fdescr(fd), msg);
+    hdrblobFree(sigblob);
+    headerFree(sigh);
     free(msg);
 
     return rc;

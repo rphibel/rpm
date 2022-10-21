@@ -122,7 +122,7 @@ int rpmVersionCompare(Header first, Header second);
 
 /**  \ingroup header
  * Check header consistency, performing headerGetEntry() the hard way.
- *  
+ *
  * Sanity checks on the header are performed while looking for a
  * header-only digest or signature to verify the blob. If found,
  * the digest or signature is verified.
@@ -164,6 +164,14 @@ rpmRC rpmReadPackageFile(rpmts ts, FD_t fd,
  * @return		RPMRC_OK on success
  */
 rpmRC rpmReadPackageRaw(FD_t fd, Header * sigp, Header * hdrp);
+
+/** \ingroup header
+ * Return package signature from file handle, no verification.
+ * @param fd		file handle
+ * @param[out] sigp		address of header (or NULL)
+ * @return		RPMRC_OK on success
+ */
+rpmRC rpmReadSignatureRaw(FD_t fd, Header * sigp);
 
 /** \ingroup rpmtrans
  * Install source package.
