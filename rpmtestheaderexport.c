@@ -13,6 +13,7 @@
 #include "lib/signature.h"
 #include "lib/header_internal.h"
 #include "rpmio/rpmio_internal.h"
+#include "rpmio/rpmlog.h"
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -34,11 +35,27 @@
 #include "lib/rpmhash.H"
 #include "lib/rpmhash.C"
 
+static void do_workaround(Header * sigh)
+{
+    struct rpmtd_s td;
+
+    /* This is inspired by the code in unloadImmutableRegion */
+    if (!headerGet(*sigh, RPMTAG_HEADERSIGNATURES, &td, HEADERGET_DEFAULT)) {
+	/* Signature header corrupt/missing */
+	rpmlog(RPMLOG_WARNING, _("Error verifying signature header\n"));
+	rpmtdFreeData(&td);
+	Header nh = headerCopy(*sigh);
+	headerFree(*sigh);
+	*sigh = headerLink(nh);
+	headerFree(nh);
+    }
+}
+
 static rpmRC process_package(FD_t fdi, FD_t fdo)
 {
     Header sigh;
     rpmRC rc = RPMRC_OK;
-	struct rpmlead_s l;
+    struct rpmlead_s l;
 
     rc = rpmLeadReadAndReturn(fdi, NULL, &l);
     if (rc != RPMRC_OK)
@@ -49,38 +66,43 @@ static rpmRC process_package(FD_t fdi, FD_t fdo)
 	exit(EXIT_FAILURE);
     }
 
-    if (rpmLeadWriteFromLead(fdo, l))
-    {
+    if (getenv("WORKAROUND")) {
+	do_workaround(&sigh);
+    }
+
+    if (rpmLeadWriteFromLead(fdo, l)) {
 	fprintf(stderr, _("Unable to write package lead: %s\n"),
 		Fstrerror(fdo));
 	exit(EXIT_FAILURE);
     }
 
     if (rpmWriteSignature(fdo, sigh)) {
-	fprintf(stderr, _("Unable to write signature: %s\n"), Fstrerror(fdo));
+	fprintf(stderr, _("Unable to write signature: %s\n"),
+		Fstrerror(fdo));
 	exit(EXIT_FAILURE);
     }
 
-	ssize_t fdilength = ufdCopy(fdi, fdo);
-	if (fdilength == -1) {
-		fprintf(stderr, _("process_package cat failed\n"));
-		rc = RPMRC_FAIL;
-	}
+    ssize_t fdilength = ufdCopy(fdi, fdo);
+    if (fdilength == -1) {
+	fprintf(stderr, _("process_package cat failed\n"));
+	rc = RPMRC_FAIL;
+    }
 
-exit:
+  exit:
     headerFree(sigh);
     return rc;
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     rpmRC rc;
 
     xsetprogname(argv[0]);	/* Portability call -- see system.h */
     rpmReadConfigFiles(NULL, NULL);
 
-	FD_t fdi = fdDup(STDIN_FILENO);
+    FD_t fdi = fdDup(STDIN_FILENO);
     FD_t fdo = fdDup(STDOUT_FILENO);
-	rc = process_package(fdi, fdo);
+    rc = process_package(fdi, fdo);
 
     if (rc != RPMRC_OK) {
 	/* translate rpmRC into generic failure return code. */
