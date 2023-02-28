@@ -420,3 +420,31 @@ rpmRC rpmpluginsCallFsmFilePrepare(rpmPlugins plugins, rpmfi fi,
 
     return rc;
 }
+
+static int handler_is_valid(rpmPluginContentHanlder handler) {
+    return handler->archiveReader && handler->fileInstall && handler->verify;
+}
+
+rpmRC rpmpluginsCallContentHandler(rpmPlugins plugins, rpmte te)
+{
+    plugin_content_handler_func hookFunc;
+    int i;
+    rpmRC rc = RPMRC_OK;
+    struct rpmPluginContentHanlder_s handler = {};
+
+    for (i = 0; i < plugins->count; i++) {
+	rpmPlugin plugin = plugins->plugins[i];
+	RPMPLUGINS_SET_HOOK_FUNC(content_handler);
+	if (hookFunc) {
+	    int hrc = hookFunc(plugin, te, &handler);
+	    if (hrc == RPMRC_FAIL)
+		rpmlog(RPMLOG_WARNING, "Plugin %s: hook content_handler failed\n", plugin->name);
+	    else if (handler_is_valid(&handler)) {
+		rpmteSetContentHandler(te, &handler, plugin);
+		break;
+	    }
+	}
+    }
+
+    return rc;
+}
