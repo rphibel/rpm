@@ -37,7 +37,7 @@ typedef rpmFlags rpmFsmOp;
 #define XFO_ACTION(_a)	((_a) & XFA_MASK)	/*!< File op action part */
 #define XFO_FLAGS(_a)	((_a) & XFAF_MASK)	/*!< File op flags part */
 
-struct rpmPluginContentHanlder_s {
+struct rpmPluginContentHandler_s {
     rmpteFileInstallFunction fileInstall; /* File install function */
     rpmteArchiveReaderFunction archiveReader; /* Archive reader */
     rpmteVerifyFunction verify; /* Verify function */
@@ -69,7 +69,7 @@ typedef rpmRC (*plugin_fsm_file_prepare_func)(rpmPlugin plugin, rpmfi fi,
 					      mode_t file_mode, rpmFsmOp op);
 
 typedef rpmRC (*plugin_content_handler_func)(rpmPlugin plugin, rpmte te,
-                                           rpmPluginContentHanlder handler);
+                                           rpmPluginContentHandler handler);
 
 typedef struct rpmPluginHooks_s * rpmPluginHooks;
 struct rpmPluginHooks_s {

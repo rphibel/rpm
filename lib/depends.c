@@ -456,7 +456,7 @@ static int addPackage(rpmts ts, Header h,
     }
 
     if (!rpmteContentHandlerPlugin(p)) {
-	struct rpmPluginContentHanlder_s handler = {
+	struct rpmPluginContentHandler_s handler = {
 	    .fileInstall = fsmFileInstall,
 	    .archiveReader = fsmArchiveReader,
 	    .verify = verifyPackageFile,

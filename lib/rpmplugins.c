@@ -421,7 +421,7 @@ rpmRC rpmpluginsCallFsmFilePrepare(rpmPlugins plugins, rpmfi fi,
     return rc;
 }
 
-static int handler_is_valid(rpmPluginContentHanlder handler) {
+static int handler_is_valid(rpmPluginContentHandler handler) {
     return handler->archiveReader && handler->fileInstall && handler->verify;
 }
 
@@ -430,7 +430,7 @@ rpmRC rpmpluginsCallContentHandler(rpmPlugins plugins, rpmte te)
     plugin_content_handler_func hookFunc;
     int i;
     rpmRC rc = RPMRC_OK;
-    struct rpmPluginContentHanlder_s handler = {};
+    struct rpmPluginContentHandler_s handler = {};
 
     for (i = 0; i < plugins->count; i++) {
 	rpmPlugin plugin = plugins->plugins[i];

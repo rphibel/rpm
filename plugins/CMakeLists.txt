@@ -1,6 +1,11 @@
 add_library(prioreset MODULE prioreset.c)
 add_library(syslog MODULE syslog.c)
 
+add_library(rpmextents STATIC rpmextents.c)
+target_include_directories(rpmextents INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+add_library(reflink MODULE reflink.c)
+target_link_libraries(reflink PUBLIC rpmextents)
+
 if(WITH_SELINUX)
 	add_library(selinux MODULE selinux.c)
 	target_link_libraries(selinux PRIVATE PkgConfig::SELINUX)

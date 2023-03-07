@@ -324,7 +324,7 @@ rpmPlugin rpmteContentHandlerPlugin(rpmte te);
  * @param   handler	structure containing handling functions
  * @param   plugin	plugin providing content handling functions
  */
-void rpmteSetContentHandler(rpmte te, rpmPluginContentHanlder handler, rpmPlugin plugin);
+void rpmteSetContentHandler(rpmte te, rpmPluginContentHandler handler, rpmPlugin plugin);
 
 #ifdef __cplusplus
 }

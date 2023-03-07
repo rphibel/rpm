@@ -842,7 +842,7 @@ rpmPlugin rpmteContentHandlerPlugin(rpmte te) {
     return (te != NULL ? te->contentHandlerPlugin : NULL);
 }
 
-void rpmteSetContentHandler(rpmte te, rpmPluginContentHanlder handler, rpmPlugin plugin) {
+void rpmteSetContentHandler(rpmte te, rpmPluginContentHandler handler, rpmPlugin plugin) {
     te->archiveReader = handler->archiveReader;
     te->fileInstall = handler->fileInstall;
     te->verify = handler->verify;

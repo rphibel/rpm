@@ -85,7 +85,7 @@ typedef struct rpmstrPool_s * rpmstrPool;
 
 typedef struct rpmPlugin_s * rpmPlugin;
 typedef struct rpmPlugins_s * rpmPlugins;
-typedef struct rpmPluginContentHanlder_s * rpmPluginContentHanlder;
+typedef struct rpmPluginContentHandler_s * rpmPluginContentHandler;
 
 typedef struct rpmgi_s * rpmgi;
 
