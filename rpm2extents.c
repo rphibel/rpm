@@ -156,13 +156,49 @@ static inline int isInDenyList(char *package_name)
     return is_in_deny_list;
 }
 
+/**
+ * Check if package is key is missing
+ * @param package_name	    package name
+ * @param keyrc		    return code of key validation
+ * @return		    true if package key is missing
+ */
+static inline int keyIsMissing(char *package_name, rpmRC keyrc)
+{
+    if (keyrc == RPMRC_NOKEY)
+	rpmlog(RPMLOG_WARNING, _("package %s key is missing\n"), package_name);
+
+    return (keyrc == RPMRC_NOKEY);
+}
+
+/**
+ * Check if transcoding should be skipped
+ * @param package_name	    package name
+ * @param keyrc		    return code of key validation
+ * @return		    true if transcoding should be skipped
+ */
+static inline int skipTranscoding(char *package_name, rpmRC keyrc)
+{
+    return (isInDenyList(package_name) || keyIsMissing(package_name, keyrc));
+}
+
 static rpmRC FDWriteSignaturesValidation(FD_t fdo, int rpmvsrc, char *msg) {
     size_t len;
+    rpmRC keyrc = RPMRC_OK;
     rpmRC rc = RPMRC_FAIL;
 
     if(rpmvsrc){
 	rpmlog(RPMLOG_WARNING,
 	       _("Error verifying package signatures:\n%s\n"), msg);
+	if (strstr(msg, "NOKEY")) {
+	    keyrc = RPMRC_NOKEY;
+	}
+    }
+
+    if (Fwrite(&keyrc, sizeof(keyrc), 1, fdo) != sizeof(keyrc)) {
+	rpmlog(RPMLOG_ERR,
+	       _("Unable to write key RC code %d: %d, %s\n"),
+	       keyrc, errno, strerror(errno));
+	goto exit;
     }
 
     len = sizeof(rpmvsrc);
@@ -281,6 +317,7 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
     rpmfiles files = NULL;
     rpmfi fi = NULL;
     char *msg = NULL;
+    rpmRC keyrc = RPMRC_OK;
 
     fdo = fdDup(STDOUT_FILENO);
 
@@ -288,9 +325,15 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
     if (rc != RPMRC_OK)
 	goto exit;
 
+    if (Fread(&keyrc, sizeof(keyrc), 1, validationi) != sizeof(keyrc)) {
+	rpmlog(RPMLOG_ERR,
+	       _("Unable to read key RC code: %d, %s\n"),
+	       errno, strerror(errno));
+    }
+
     /* Skip conversion if package is in deny list */
-    if (isInDenyList(l.name)) {
-	rpmlog(RPMLOG_WARNING, _("package %s is in deny list: conversion skipped\n"), l.name);
+    if (skipTranscoding(l.name, keyrc)) {
+	rpmlog(RPMLOG_WARNING, _("package %s conversion skipped\n"), l.name);
 	if (rpmLeadWrite(fdo, l)) {
 	    rpmlog(RPMLOG_ERR, _("Unable to write package lead: %s\n"),
 		    Fstrerror(fdo));
@@ -499,34 +542,41 @@ static rpmRC process_package(FD_t fdi, FD_t digestori, FD_t validationi)
 
 static off_t ufdTee(FD_t sfd, FD_t *fds, int len)
 {
-    char buf[BUFSIZ];
+    int size = 2 * BUFSIZ;
+    char *buf = (char *)malloc(size);
     ssize_t rdbytes, wrbytes;
     off_t total = 0;
 
     while (1) {
-	rdbytes = Fread(buf, sizeof(buf[0]), sizeof(buf), sfd);
-
-	if (rdbytes > 0) {
-	    for(int i=0; i < len; i++) {
-		wrbytes = Fwrite(buf, sizeof(buf[0]), rdbytes, fds[i]);
-		if (wrbytes != rdbytes) {
-		    rpmlog(RPMLOG_ERR,
-			   _("Error wriing to FD %d: %s\n"),
-			   i, Fstrerror(fds[i]));
-		    total = -1;
-		    break;
-		}
-	    }
-	    if(total == -1){
-		break;
-	    }
-	    total += wrbytes;
-	} else {
+	if (total + BUFSIZ > size) {
+	    size *= 2;
+	    buf = (char *)realloc(buf, size);
+	}
+	rdbytes = Fread(buf + total, sizeof(buf[0]), BUFSIZ, sfd);
+	if (rdbytes <= 0) {
 	    if (rdbytes < 0)
 		total = -1;
 	    break;
 	}
+	total += rdbytes;
     }
+
+    if (total > 0) {
+	for(int i=0; i < len; i++) {
+	    wrbytes = Fwrite(buf, sizeof(buf[0]), total, fds[i]);
+	    if (wrbytes != total) {
+		rpmlog(RPMLOG_ERR,
+		       _("Error wriing to FD %d: %s\n"),
+		       i, Fstrerror(fds[i]));
+		total = -1;
+		break;
+	    }
+	    Fclose(fds[i]);
+	    fds[i] = NULL;
+	}
+    }
+
+    free(buf);
 
     return total;
 }
@@ -626,8 +676,8 @@ static rpmRC teeRpm(FD_t fdi, uint8_t algos[], uint32_t algos_len) {
 	    /* Actual parent. Read from fdi and write to both processes */
 	    close(processorpipefd[0]);
 	    close(validatorpipefd[0]);
-	    fds[0] = fdDup(processorpipefd[1]);
-	    fds[1] = fdDup(validatorpipefd[1]);
+	    fds[0] = fdDup(validatorpipefd[1]);
+	    fds[1] = fdDup(processorpipefd[1]);
 	    close(validatorpipefd[1]);
 	    close(processorpipefd[1]);
 	    close(meta_digestpipefd[0]);
@@ -641,8 +691,6 @@ static rpmRC teeRpm(FD_t fdi, uint8_t algos[], uint32_t algos_len) {
 		rpmlog(RPMLOG_ERR, _("Failed to tee RPM\n"));
 		rc = RPMRC_FAIL;
 	    }
-	    Fclose(fds[0]);
-	    Fclose(fds[1]);
 	    w = waitpid(cpids[0], &wstatus, 0);
 	    if (w == -1) {
 		rpmlog(RPMLOG_ERR, _("waitpid cpids[0] failed\n"));
