@@ -6,6 +6,10 @@
  * File info set iterator API.
  */
 
+#if defined(__linux__)
+#include <linux/fs.h>        /* For FICLONE */
+#endif
+
 #include <rpm/rpmtypes.h>
 #include <rpm/rpmfiles.h>
 #include <rpm/rpmarchive.h>
@@ -163,6 +167,10 @@ int rpmfiDigestAlgo(rpmfi fi);
  * @return		current file digest, NULL on invalid
  */
 const unsigned char * rpmfiFDigest(rpmfi fi, int *algo, size_t *diglen);
+
+struct file_clone_range rpmfiFcr(rpmfi fi);
+struct file_clone_range rpmfilesFcr(rpmfiles fi, int ix);
+int rpmfilesSetFcr(rpmfiles fi, int ix, struct file_clone_range fcr);
 
 /** \ingroup rpmfi
  * Return current file (hex) digest of file info set iterator.
