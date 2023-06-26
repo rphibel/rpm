@@ -14,6 +14,7 @@
 #include <rpm/rpmbase64.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 
 #include "lib/rpmfi_internal.h"
 #include "lib/rpmte_internal.h"	/* relocations */
@@ -131,6 +132,8 @@ struct rpmfiles_s {
     rpm_loff_t * replacedLSizes;/*!< (TR_ADDED) */
     int magic;
     int nrefs;		/*!< Reference count. */
+
+    struct file_clone_range * fcrs;
 };
 
 static int indexSane(rpmtd xd, rpmtd yd, rpmtd zd);
@@ -565,6 +568,31 @@ const unsigned char * rpmfilesFDigest(rpmfiles fi, int ix, int *algo, size_t *le
 	    *algo = fi->digestalgo;
     }
     return digest;
+}
+
+int rpmfilesSetFcr(rpmfiles fi, int ix, struct file_clone_range fcr) {
+    if (fi == NULL)
+	return -1;
+
+    if (ix >= rpmfilesFC(fi))
+	return -1;
+
+    if (fi->fcrs == NULL) {
+	fi->fcrs = xcalloc(rpmfilesFC(fi), sizeof(struct file_clone_range));
+    }
+    fi->fcrs[ix] = fcr;
+
+    return 0;
+}
+
+struct file_clone_range rpmfilesFcr(rpmfiles fi, int ix)
+{
+    struct file_clone_range fcr = { .src_fd = -1};
+
+    if (fi != NULL && fi->fcrs != NULL && ix >= 0 && ix < rpmfilesFC(fi)) {
+	fcr = fi->fcrs[ix];
+    }
+    return fcr;
 }
 
 char * rpmfiFDigestHex(rpmfi fi, int *algo)
@@ -1294,6 +1322,8 @@ rpmfiles rpmfilesFree(rpmfiles fi)
 
     fi->nlinks = nlinkHashFree(fi->nlinks);
 
+    fi->fcrs = _free(fi->fcrs);
+
     (void) rpmfilesUnlink(fi);
     memset(fi, 0, sizeof(*fi));		/* XXX trash and burn */
     fi = _free(fi);
@@ -1976,6 +2006,11 @@ const unsigned char * rpmfiFDigest(rpmfi fi, int *algo, size_t *len)
     return rpmfilesFDigest(fi ? fi->files : NULL, fi ? fi->i : -1, algo, len);
 }
 
+struct file_clone_range rpmfiFcr(rpmfi fi)
+{
+	return fi ? rpmfilesFcr(fi->files, fi->i) : rpmfilesFcr(NULL, -1);
+}
+
 const unsigned char * rpmfiFSignature(rpmfi fi, size_t *len)
 {
     return rpmfilesFSignature(fi ? fi->files : NULL, fi ? fi->i : -1, len);
@@ -2384,9 +2419,9 @@ ssize_t rpmfiArchiveRead(rpmfi fi, void * buf, size_t size)
     return rpmcpioRead(fi->archive, buf, size);
 }
 
-int rpmfiArchiveReadToFilePsm(rpmfi fi, FD_t fd, int nodigest, rpmpsm psm)
+int rpmfiArchiveReadToFilePsm(rpmfi fi, FD_t fd, int nodigest, rpmpsm psm, rpmFileAction action)
 {
-    if (fi == NULL || fi->archive == NULL || fd == NULL)
+    if (fi == NULL || fd == NULL)
 	return -1;
 
     rpm_loff_t left = rpmfiFSize(fi);
@@ -2400,6 +2435,24 @@ int rpmfiArchiveReadToFilePsm(rpmfi fi, FD_t fd, int nodigest, rpmpsm psm)
 	fidigest = rpmfilesFDigest(fi->files, rpmfiFX(fi), NULL, NULL);
 	fdInitDigest(fd, digestalgo, 0);
     }
+
+    if (action == FA_REFLINK) {
+	fprintf(stderr, "rpmfiArchiveReadToFilePsm: FA_REFLINK\n");
+	struct file_clone_range fcr = rpmfiFcr(fi);
+	if (fcr.src_fd >= 0) {
+	    fprintf(stderr, "rpmfiArchiveReadToFilePsm: Reflinking %llu bytes at %llu to %s orig size=%ld, file=%lld\n",fcr.src_length, fcr.src_offset, Fdescr(fd), left, fcr.src_fd);
+	    rc = ioctl(Fileno(fd), FICLONERANGE, &fcr);
+	    if (!rc) {
+		fprintf(stderr, "rpmfiArchiveReadToFilePsm: Reflinking at %s succeeded\n", Fdescr(fd));
+		goto exit;
+	    } else {
+		rpmlog(RPMLOG_WARNING, _("rpmfiArchiveReadToFilePsm: falling back to copying bits for %s due to %d, %d = %s\n"), Fdescr(fd), rc, errno, strerror(errno));
+	    }
+	}
+    }
+
+    if (fi->archive == NULL)
+	return -1;
 
     while (left) {
 	size_t len;
@@ -2448,7 +2501,7 @@ exit:
 
 int rpmfiArchiveReadToFile(rpmfi fi, FD_t fd, int nodigest)
 {
-    return rpmfiArchiveReadToFilePsm(fi, fd, nodigest, NULL);
+    return rpmfiArchiveReadToFilePsm(fi, fd, nodigest, NULL, FA_UNKNOWN);
 }
 
 char * rpmfileStrerror(int rc)
