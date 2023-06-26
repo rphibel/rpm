@@ -30,6 +30,8 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
 int rpmPackageFilesRemove(rpmts ts, rpmte te, rpmfiles files,
               rpmpsm psm, char ** failedFile);
 
+rpmfi fsmArchiveReader(FD_t fd, rpmfiles files, int itype, rpmPlugin plugin);
+
 RPM_GNUC_INTERNAL
 int rpmfiArchiveReadToFilePsm(rpmfi fi, FD_t fd, int nodigest, rpmpsm psm, rpmFileAction action);
 

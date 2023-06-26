@@ -848,11 +848,11 @@ static int onChdir(rpmfi fi, void *data)
     return 0;
 }
 
-static rpmfi fsmIter(FD_t payload, rpmfiles files, rpmFileIter iter, void *data)
+static rpmfi fsmIter(rpmte te, FD_t payload, rpmfiles files, rpmFileIter iter, void *data)
 {
     rpmfi fi;
     if (payload)
-	fi = rpmfiNewArchiveReader(payload, files, RPMFI_ITER_READ_ARCHIVE);
+	fi = rpmteArchiveReader(te)(payload, files, RPMFI_ITER_READ_ARCHIVE, rpmteContentHandlerPlugin(te));
     else
 	fi = rpmfilesIter(files, iter);
     if (fi && data)
@@ -865,6 +865,10 @@ static rpmfi fsmIterFini(rpmfi fi, struct diriter_s *di)
     fsmClose(&(di->dirfd));
     fsmClose(&(di->firstdir));
     return rpmfiFree(fi);
+}
+
+rpmfi fsmArchiveReader(FD_t fd, rpmfiles files, int itype, rpmPlugin plugin) {
+    return rpmfiNewArchiveReader(fd, files, itype);
 }
 
 int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
@@ -918,7 +922,7 @@ int rpmPackageFilesInstall(rpmts ts, rpmte te, rpmfiles files,
     if (rc)
 	goto exit;
 
-    fi = fsmIter(payload, files,
+    fi = fsmIter(te, payload, files,
 		 payload ? RPMFI_ITER_READ_ARCHIVE : RPMFI_ITER_FWD, &di);
 
     if (fi == NULL) {
@@ -1053,7 +1057,7 @@ setmeta:
 	rc = fx;
 
     /* If all went well, commit files to final destination */
-    fi = fsmIter(NULL, files, RPMFI_ITER_FWD, &di);
+    fi = fsmIter(te, NULL, files, RPMFI_ITER_FWD, &di);
     while (!rc && (fx = rpmfiNext(fi)) >= 0) {
 	struct filedata_s *fp = &fdata[fx];
 
@@ -1082,7 +1086,7 @@ setmeta:
 
     /* On failure, walk backwards and erase non-committed files */
     if (rc) {
-	fi = fsmIter(NULL, files, RPMFI_ITER_BACK, &di);
+	fi = fsmIter(te, NULL, files, RPMFI_ITER_BACK, &di);
 	while ((fx = rpmfiNext(fi)) >= 0) {
 	    struct filedata_s *fp = &fdata[fx];
 
@@ -1115,7 +1119,7 @@ int rpmPackageFilesRemove(rpmts ts, rpmte te, rpmfiles files,
               rpmpsm psm, char ** failedFile)
 {
     struct diriter_s di = { -1, -1 };
-    rpmfi fi = fsmIter(NULL, files, RPMFI_ITER_BACK, &di);
+    rpmfi fi = fsmIter(te, NULL, files, RPMFI_ITER_BACK, &di);
     rpmfs fs = rpmteGetFileStates(te);
     rpmPlugins plugins = rpmtsPlugins(ts);
     int fc = rpmfilesFC(files);
