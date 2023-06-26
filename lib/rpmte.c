@@ -81,6 +81,10 @@ struct rpmte_s {
     int failed;			/*!< (parent) install/erase failed */
 
     rpmfs fs;
+
+    rpmteArchiveReaderFunction archiveReader; /* Archive reader */
+    rpmteVerifyFunction verify; /* Verify function */
+    rpmPlugin contentHandlerPlugin; /* Content handler plugin */
 };
 
 /* forward declarations */
@@ -221,6 +225,10 @@ static int addTE(rpmte p, Header h, fnpyKey key, rpmRelocation * relocs)
 
     if (p->type == TR_ADDED)
 	p->pkgFileSize = headerGetNumber(h, RPMTAG_LONGSIGSIZE) + 96 + 256;
+
+    p->archiveReader = NULL;
+    p->verify = NULL;
+    p->contentHandlerPlugin = NULL;
 
     rc = 0;
 
@@ -435,6 +443,11 @@ FD_t rpmteSetFd(rpmte te, FD_t fd)
 	    te->fd = fdLink(fd);
     }
     return NULL;
+}
+
+FD_t rpmteFd(rpmte te)
+{
+    return (te != NULL ? te->fd : NULL);
 }
 
 fnpyKey rpmteKey(rpmte te)
@@ -797,6 +810,24 @@ int rpmteVerified(rpmte te)
 int rpmteAddOp(rpmte te)
 {
     return te->addop;
+}
+
+rpmteArchiveReaderFunction rpmteArchiveReader(rpmte te) {
+    return (te != NULL ? te->archiveReader : NULL);
+}
+
+rpmteVerifyFunction rpmteVerify(rpmte te) {
+    return (te != NULL ? te->verify : NULL);
+}
+
+rpmPlugin rpmteContentHandlerPlugin(rpmte te) {
+    return (te != NULL ? te->contentHandlerPlugin : NULL);
+}
+
+void rpmteSetContentHandler(rpmte te, struct rpmteContentHandler_s * handler, rpmPlugin plugin) {
+    te->archiveReader = handler->archiveReader;
+    te->verify = handler->verify;
+    te->contentHandlerPlugin = plugin;
 }
 
 int rpmteProcess(rpmte te, pkgGoal goal, int num)

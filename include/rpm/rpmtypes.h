@@ -92,6 +92,9 @@ typedef struct rpmSpec_s * rpmSpec;
 
 typedef struct rpmRelocation_s rpmRelocation;
 
+typedef struct vfydata_s * vfydata;
+
+typedef struct rpmvs_s * rpmvs;
 
 /** \ingroup rpmtypes 
  * RPM IO file descriptor type
