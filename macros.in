@@ -1186,6 +1186,7 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 %__transaction_prioreset	%{__plugindir}/prioreset.so
 %__transaction_audit		%{__plugindir}/audit.so
 %__transaction_dbus_announce	%{__plugindir}/dbus_announce.so
+%__transaction_reflink		%{__plugindir}/reflink.so
 
 #------------------------------------------------------------------------------
 # Macros for further automated spec %setup and patch application
